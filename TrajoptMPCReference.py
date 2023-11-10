@@ -383,9 +383,8 @@ class TrajoptMPCReference:
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, False, options_linSys)
                 elif USING_PCG: # PCG
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, True, options_linSys)
-                # you say invalid, but N is covered above, why? TODO!
                 else:
-                    print("Invalid QP Solver options are:\n", \
+                    print("Valid QP Solver options are:\n", \
                           "N      : Standard Backslash\n", \
                           "S      : Schur Complement Backslash\n", \
                           "PCG-X  : PCG with Preconditioner X (see PCG for valid preconditioners)\n")
@@ -506,7 +505,8 @@ class TrajoptMPCReference:
                 break
 
         if options['RETURN_TRACE_SQP']:
-            return x, u, trace    
+            return x, u, trace   
+        
         return x, u
 
     def iLQR(self, x: np.ndarray, u: np.ndarray, N: int, dt: float, options):
@@ -847,4 +847,4 @@ class TrajoptMPCReference:
             print(x_trace)
             print(u_trace)
 
-        return
+        return x_trace, u_trace
