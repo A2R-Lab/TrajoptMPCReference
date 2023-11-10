@@ -25,38 +25,32 @@ class MPCSolverMethods(enum.Enum):
     QP_PCG_SS = "QP-PCG-SS"
 
 class TrajoptMPCReference:
-    def __init__(self, plantObj, costObj, constraintObj = None):
+    def __init__(self, plantObj:TrajoptPlant, costObj: TrajoptCost, constraintObj: TrajoptConstraint = None):
         if (not issubclass(type(plantObj),TrajoptPlant) or not issubclass(type(costObj),TrajoptCost)):
-            print("Must pass in a TrajoptPlant and TrajoptCost object.")
+            print("Must pass in a TrajoptPlant and TrajoptCost object to TrajoptMPCReference.")
             exit()
         if constraintObj is None:
             constraintObj = TrajoptConstraint()
         elif not issubclass(type(constraintObj),TrajoptConstraint):
-            print("If passing in additional constraints must pass in a TrajoptConstraint object.")
+            print("If passing in additional constraints must pass in a TrajoptConstraint object to TrajoptMPCReference.")
             exit()
         self.plant = plantObj
         self.cost = costObj
         self.other_constraints = constraintObj
 
-    def update_cost(self, costObj):
-        if not issubclass(type(costObj),TrajoptCost):
-            print("Must pass in a TrajoptCost object.")
-            exit()
+    def update_cost(self, costObj: TrajoptCost):
+        assert issubclass(type(costObj),TrajoptCost), "Must pass in a TrajoptCost object to update_cost in TrajoptMPCReference."
         self.cost = costObj
 
-    def update_plant(self, plantObj):
-        if not issubclass(type(plantObj),TrajoptPlant):
-            print("Must pass in a TrajoptPlant object.")
-            exit()
+    def update_plant(self, plantObj: TrajoptPlant):
+        assert issubclass(type(plantObj),TrajoptPlant), "Must pass in a TrajoptPlant object to update_plant in TrajoptMPCReference."
         self.plant = plantObj
 
-    def update_constraints(self, constraintObj):
-        if not issubclass(type(constraintObj),TrajoptConstraint):
-            print("Must pass in a TrajoptConstraint object.")
-            exit()
+    def update_constraints(self, constraintObj: TrajoptConstraint):
+        assert issubclass(type(constraintObj),TrajoptConstraint), "Must pass in a TrajoptConstraint object to update_constraints in TrajoptMPCReference."
         self.other_constraints = constraintObj
 
-    def set_default_options(self, options):
+    def set_default_options(self, options: dict):
         # LinSys options (mostly for PCG)
         options.setdefault('exit_tolerance_linSys', 1e-6)
         options.setdefault('max_iter_linSys', 100)
@@ -88,7 +82,7 @@ class TrajoptMPCReference:
         options.setdefault('num_timesteps_per_solve_mpc',  1)
         options.setdefault('simulator_steps_mpc', 1)
 
-    def formKKTSystemBlocks(self, x, u, xs, N, dt):
+    def formKKTSystemBlocks(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float):
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -170,7 +164,7 @@ class TrajoptMPCReference:
 
         return G, g, C, c
 
-    def totalHardConstraintViolation(self, x, u, xs, N, dt, mode = None):
+    def totalHardConstraintViolation(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, mode = None):
         mode_func = sum
         if mode == "MAX":
             mode_func = max
@@ -193,7 +187,7 @@ class TrajoptMPCReference:
                 c += mode_func(list(map(abs,c_err)))
         return c
 
-    def totalCost(self, x, u, N):
+    def totalCost(self, x: np.ndarray, u: np.ndarray, N: int):
         J = 0
         for k in range(N-1):
             J += self.cost.value(x[:,k], u[:,k], k)
@@ -205,7 +199,7 @@ class TrajoptMPCReference:
             J += self.other_constraints.value_soft_constraints(x[:,N-1], timestep = N-1)
         return J
 
-    def solveKKTSystem(self, x, u, xs, N, dt, rho = 0, options = {}):
+    def solveKKTSystem(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, options = {}):
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -234,7 +228,7 @@ class TrajoptMPCReference:
 
         return dxul
 
-    def solveKKTSystem_Schur(self, x, u, xs, N, dt, rho = 0, use_PCG = False, options = {}):
+    def solveKKTSystem_Schur(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, use_PCG = False, options = {}):
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -280,13 +274,13 @@ class TrajoptMPCReference:
         else:
             return dxul
 
-    def reduce_regularization(self, rho, drho, options):
+    def reduce_regularization(self, rho: float, drho: float, options: dict):
         self.set_default_options(options)
         drho = min(drho/options['rho_factor_SQP_DDP'], 1/options['rho_factor_SQP_DDP'])
         rho = max(rho*drho, options['rho_min_SQP_DDP'])
         return rho, drho
 
-    def check_for_exit_or_error(self, error, delta_J, iteration, rho, drho, options):
+    def check_for_exit_or_error(self, error: bool, delta_J: float, iteration: int, rho: float, drho: float, options):
         self.set_default_options(options)
         exit_flag = False
         if error:
@@ -309,7 +303,7 @@ class TrajoptMPCReference:
             iteration += 1
         return exit_flag, iteration, rho, drho
 
-    def check_and_update_soft_constraints(self, x, u, iteration, options):
+    def check_and_update_soft_constraints(self, x: np.ndarray, u: np.ndarray, iteration: int, options):
         exit_flag = False
         # check for exit for constraint convergence
         max_c = self.other_constraints.max_soft_constraint_value(x,u)
@@ -334,7 +328,7 @@ class TrajoptMPCReference:
                 exit_flag = True
         return exit_flag, iteration
 
-    def SQP(self, x, u, N, dt, LINEAR_SYSTEM_SOLVER_METHOD = SQPSolverMethods.N, options = {}):
+    def SQP(self, x: np.ndarray, u: np.ndarray, N: int, dt: float, LINEAR_SYSTEM_SOLVER_METHOD: SQPSolverMethods = SQPSolverMethods.N, options = {}):
         self.set_default_options(options)
         options_linSys = {'DEBUG_MODE': options['DEBUG_MODE_linSys']}
 
@@ -383,12 +377,13 @@ class TrajoptMPCReference:
                 #
                 # Solve QP to get step direction
                 #
-                if LINEAR_SYSTEM_SOLVER_METHOD == "N": # standard backslash
+                if LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.N: # standard backslash
                     dxul = self.solveKKTSystem(x, u, xs, N, dt, rho, options_linSys)
-                elif LINEAR_SYSTEM_SOLVER_METHOD == "S": # schur complement backslash
+                elif LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.S: # schur complement backslash
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, False, options_linSys)
                 elif USING_PCG: # PCG
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, True, options_linSys)
+                # you say invalid, but N is covered above, why? TODO!
                 else:
                     print("Invalid QP Solver options are:\n", \
                           "N      : Standard Backslash\n", \
@@ -514,7 +509,7 @@ class TrajoptMPCReference:
             return x, u, trace    
         return x, u
 
-    def iLQR(self, x, u, N, dt, options):
+    def iLQR(self, x: np.ndarray, u: np.ndarray, N: int, dt: float, options):
         self.set_default_options(options)
 
         nq = self.plant.get_num_pos()
@@ -659,7 +654,7 @@ class TrajoptMPCReference:
                         if not delta_J_expected == 0:
                             delta_J_ratio = delta_J / delta_J_expected
                         else:
-                            delta_J_ratio = expected_reduction_min_SQP_DDP
+                            delta_J_ratio = options["expected_reduction_min_SQP_DDP"]
                         #
                         # If succeeded accept new trajectory
                         #
@@ -732,7 +727,7 @@ class TrajoptMPCReference:
             print(u)
         return x, u, K
 
-    def LQR_tracking(self, x, u, xs, N, dt):
+    def LQR_tracking(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float):
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -763,7 +758,7 @@ class TrajoptMPCReference:
         return K
 
 
-    def integrate_and_shift_trajectory(self, x, u, K, xs, dt, options = {}):
+    def integrate_and_shift_trajectory(self, x: np.ndarray, u: np.ndarray, K: int, xs: np.ndarray, dt: float, options = {}):
         self.set_default_options(options)
         # compute new start state
         xs_new = copy.deepcopy(xs)
@@ -798,7 +793,7 @@ class TrajoptMPCReference:
         return x, u, xs
 
 
-    def MPC(self, x, u, N, dt, SOLVER_METHOD = MPCSolverMethods.QP_N, options = {}):
+    def MPC(self, x: np.ndarray, u: np.ndarray, N: int, dt: float, SOLVER_METHOD = MPCSolverMethods.QP_N, options = {}):
         self.set_default_options(options)
 
         last_err = float('inf')

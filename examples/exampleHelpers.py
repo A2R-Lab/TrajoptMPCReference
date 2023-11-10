@@ -10,7 +10,7 @@ from TrajoptMPCReference import TrajoptMPCReference, SQPSolverMethods, MPCSolver
 import numpy as np
 import copy
 
-def runSolversSQP(trajoptMPCReference: TrajoptMPCReference, N: int, dt: float, solver_methods, options = {}):
+def runSolversSQP(trajoptMPCReference: TrajoptMPCReference, N: int, dt: float, solver_methods: list[SQPSolverMethods], options = {}):
 	for solver in solver_methods:
 		print("-----------------------------")
 		print("Solving with method: ", solver)
