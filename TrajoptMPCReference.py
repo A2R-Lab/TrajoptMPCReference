@@ -654,7 +654,7 @@ class TrajoptMPCReference:
                         if not delta_J_expected == 0:
                             delta_J_ratio = delta_J / delta_J_expected
                         else:
-                            delta_J_ratio = expected_reduction_min_SQP_DDP
+                            delta_J_ratio = options["expected_reduction_min_SQP_DDP"]
                         #
                         # If succeeded accept new trajectory
                         #
