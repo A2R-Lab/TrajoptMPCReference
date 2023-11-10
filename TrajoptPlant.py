@@ -4,18 +4,18 @@ from GRiD import RBDReference
 from GRiD import URDFParser
 
 class TrajoptPlant:
-	def __init__(self, integrator_type = 0, options = {}, need_path = False):
+	def __init__(self, integrator_type: int = 0, options = {}, need_path: bool = False):
 		self.validate_integrator_type(integrator_type)
 		self.integrator_type = integrator_type
 		self.set_default_options(options, need_path)
 		self.options = options
 
-	def validate_integrator_type(self, integrator_type):
+	def validate_integrator_type(self, integrator_type: int):
 		if not (integrator_type in [0, 1, 2, 3, 4, -1]):
 			print("Invalid integrator options are [0 : euler, 1 : semi-implicit euler, 2 : midpoint, 3 : rk3, 4 : rk4, -1 : hard-coded as dynamics")
 			exit()
 
-	def set_default_options(self, options, need_path = False):
+	def set_default_options(self, options: dict, need_path: bool = False):
 		options.setdefault('path_to_urdf', None)
 		options.setdefault('gravity', -9.81)
 		if need_path and (not options.get('path_to_urdf')):
@@ -47,7 +47,7 @@ class TrajoptPlant:
 
 	#  [ v ;
 	#   qdd ]
-	def qdd_to_xdot(self, xk, qdd):
+	def qdd_to_xdot(self, xk: np.ndarray, qdd: np.ndarray):
 		nq = self.get_num_pos()
 		nv = self.get_num_vel()
 		nu = self.get_num_cntrl()
@@ -55,14 +55,14 @@ class TrajoptPlant:
 
 	# [ 0       ; eye     ; 0
 	#   dqdd/dq ; dqdd/dv ; dqdd/du ]
-	def dqdd_to_dxdot(self, dqdd):
+	def dqdd_to_dxdot(self, dqdd: np.ndarray):
 		nq = self.get_num_pos()
 		nv = self.get_num_vel()
 		m = self.get_num_cntrl()
 		top = np.hstack((np.zeros((nq,nq)), np.eye(nv), np.zeros((nq,m))))
 		return np.vstack((top, dqdd))
 
-	def integrator(self, xk, uk, dt, return_gradient = False):
+	def integrator(self, xk: np.ndarray, uk: np.ndarray, dt: float, return_gradient: bool = False):
 		n = len(xk)
 
 		if self.integrator_type == -1: # hard coded into model
@@ -186,7 +186,7 @@ class TrajoptPlant:
 				return A,B
 
 class DoubleIntegratorPlant(TrajoptPlant):
-	def __init__(self, integrator_type = 0, options = {}):
+	def __init__(self, integrator_type: int = 0, options = {}):
 		super().__init__(integrator_type, options)
 
 	def forward_dynamics(self, x, u):
@@ -208,13 +208,13 @@ class PendulumPlant(TrajoptPlant):
 	def __init__(self, integrator_type = 0, options = {}):
 		super().__init__(integrator_type, options)
 
-	def forward_dynamics(self, x, u):
+	def forward_dynamics(self, x: np.ndarray, u: np.ndarray):
 		# m * l^2 * theta_dd   +   b * theta_d   +   m * g * l * sin(theta) = u
 		# assume 0 damping and m = l = 1
 		# theta_dd = u - g * sin(theta)
 		return u - 9.81 * np.sin(x[0])
 
-	def forward_dynamics_gradient(self, x, u):
+	def forward_dynamics_gradient(self, x: np.ndarray, u: np.ndarray):
 		return np.array([- 9.81 * np.cos(x[0]), 0, 1])
 
 	def get_num_pos(self):
@@ -231,7 +231,7 @@ class CartPolePlant(TrajoptPlant):
 	def __init__(self, integrator_type = 0, options = {}):
 		super().__init__(integrator_type, options)
 
-	def forward_dynamics(self, x, u):
+	def forward_dynamics(self, x: np.ndarray, u: np.ndarray):
 		gravity = self.options['gravity']
 		# assuming m_cart = m_pole = l_pole = 1
 		q = x[0] # position of cart on track
@@ -250,7 +250,7 @@ class CartPolePlant(TrajoptPlant):
 
 		return xdd.flatten()
 
-	def forward_dynamics_gradient(self, x, u):
+	def forward_dynamics_gradient(self, x: np.ndarray, u: np.ndarray):
 		gravity = self.options['gravity']
 		# assuming m_cart = m_pole = l_pole = 1
 		q = x[0] # position of cart on track
@@ -295,7 +295,7 @@ class URDFPlant(TrajoptPlant):
 		self.robot = parser.parse(options['path_to_urdf'])
 		self.rbdReference = RBDReference(self.robot)
 
-	def forward_dynamics(self, x, u):
+	def forward_dynamics(self, x: np.ndarray, u: np.ndarray):
 		nq = self.get_num_pos()
 		q = x[0:nq]
 		qd = x[nq:]
@@ -304,7 +304,7 @@ class URDFPlant(TrajoptPlant):
 		qdd = np.matmul(Minv,(u-c))
 		return qdd
 
-	def forward_dynamics_gradient(self, x, u):
+	def forward_dynamics_gradient(self, x: np.ndarray, u: np.ndarray):
 		nq = self.get_num_pos()
 		q = x[0:nq]
 		qd = x[nq:]
