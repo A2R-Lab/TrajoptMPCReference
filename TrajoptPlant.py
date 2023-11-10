@@ -251,6 +251,7 @@ class CartPolePlant(TrajoptPlant):
 		return xdd.flatten()
 
 	def forward_dynamics_gradient(self, x, u):
+		gravity = self.options['gravity']
 		# assuming m_cart = m_pole = l_pole = 1
 		q = x[0] # position of cart on track
 		theta = x[1] # angle of pole
