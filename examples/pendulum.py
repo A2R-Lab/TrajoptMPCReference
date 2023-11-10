@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 from exampleHelpers import *
 
-sqp_solver_methods = ["PCG-SS"]#["N", "S", "PCG-J", "PCG-BJ", "PCG-SS"]
-mpc_solver_methods = ["QP-PCG-SS"] #["iLQR", "QP-N", "QP-S", "QP-PCG-J", "QP-PCG-BJ", "QP-PCG-SS"]
+sqp_solver_methods = [SQPSolverMethods.PCG_SS]#["N", "S", "PCG-J", "PCG-BJ", "PCG-SS"]
+mpc_solver_methods = [MPCSolverMethods.QP_PCG_SS] #["iLQR", "QP-N", "QP-S", "QP-PCG-J", "QP-PCG-BJ", "QP-PCG-SS"]
 
 plant = PendulumPlant()
 

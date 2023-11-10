@@ -5,12 +5,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from TrajoptPlant import TrajoptPlant, DoubleIntegratorPlant, PendulumPlant, CartPolePlant, URDFPlant
 from TrajoptCost import TrajoptCost, QuadraticCost
 from TrajoptConstraint import TrajoptConstraint, BoxConstraint
-from TrajoptMPCReference import TrajoptMPCReference
+from TrajoptMPCReference import TrajoptMPCReference, SQPSolverMethods, MPCSolverMethods
 
 import numpy as np
 import copy
 
-def runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options = {}):
+def runSolversSQP(trajoptMPCReference: TrajoptMPCReference, N: int, dt: float, solver_methods, options = {}):
 	for solver in solver_methods:
 		print("-----------------------------")
 		print("Solving with method: ", solver)

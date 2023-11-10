@@ -1,11 +1,28 @@
 import importlib
 import numpy as np
 import copy
+import enum
 from TrajoptPlant import TrajoptPlant, DoubleIntegratorPlant, PendulumPlant, CartPolePlant, URDFPlant
 from TrajoptCost import TrajoptCost, QuadraticCost
 from TrajoptConstraint import TrajoptConstraint, BoxConstraint
 PCG = importlib.import_module("GBD-PCG-Python").PCG
 np.set_printoptions(precision=4, suppress=True, linewidth = 100)
+
+class SQPSolverMethods(enum.Enum):
+    N = "N"
+    S = "S"
+    PCG_J = "PCG-J"
+    PCG_BJ = "PCG-BJ"
+    PCG_SS = "PCG-SS"
+
+
+class MPCSolverMethods(enum.Enum):
+    iLQR = "iLQR"
+    QP_N = "QP-N"
+    QP_S = "QP-S"
+    QP_PCG_J = "QP-PCG-J"
+    QP_PCG_BJ = "QP-PCG-BJ"
+    QP_PCG_SS = "QP-PCG-SS"
 
 class TrajoptMPCReference:
     def __init__(self, plantObj, costObj, constraintObj = None):
@@ -317,16 +334,16 @@ class TrajoptMPCReference:
                 exit_flag = True
         return exit_flag, iteration
 
-    def SQP(self, x, u, N, dt, LINEAR_SYSTEM_SOLVER_METHOD = "N", options = {}):
+    def SQP(self, x, u, N, dt, LINEAR_SYSTEM_SOLVER_METHOD = SQPSolverMethods.N, options = {}):
         self.set_default_options(options)
         options_linSys = {'DEBUG_MODE': options['DEBUG_MODE_linSys']}
 
-        USING_PCG = LINEAR_SYSTEM_SOLVER_METHOD.startswith("PCG-")
+        USING_PCG = LINEAR_SYSTEM_SOLVER_METHOD in [SQPSolverMethods.PCG_J, SQPSolverMethods.PCG_BJ, SQPSolverMethods.PCG_SS]
         if USING_PCG:
             options_linSys['exit_tolerance'] = options['exit_tolerance_linSys']
             options_linSys['max_iter'] = options['max_iter_linSys']
             options_linSys['RETURN_TRACE'] = options['RETURN_TRACE_linSys']
-            options_linSys['preconditioner_type'] = LINEAR_SYSTEM_SOLVER_METHOD[4:]
+            options_linSys['preconditioner_type'] = LINEAR_SYSTEM_SOLVER_METHOD.value[4:]
 
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
@@ -781,7 +798,7 @@ class TrajoptMPCReference:
         return x, u, xs
 
 
-    def MPC(self, x, u, N, dt, SOLVER_METHOD = "QP-N", options = {}):
+    def MPC(self, x, u, N, dt, SOLVER_METHOD = MPCSolverMethods.QP_N, options = {}):
         self.set_default_options(options)
 
         last_err = float('inf')
@@ -793,9 +810,10 @@ class TrajoptMPCReference:
 
         while True:
 
-            if SOLVER_METHOD.startswith('QP-'):
+            if SOLVER_METHOD in [MPCSolverMethods.QP_N, MPCSolverMethods.QP_S, MPCSolverMethods.QP_PCG_J, MPCSolverMethods.QP_PCG_BJ, MPCSolverMethods.QP_PCG_SS]:
                 options['max_iter_SQP_DDP'] = 5
-                x, u = self.SQP(x, u, N, dt, SOLVER_METHOD[3:], options)
+                sqp_solver = SQPSolverMethods(SOLVER_METHOD.value[3:])
+                x, u = self.SQP(x, u, N, dt, sqp_solver, options)
                 K = self.LQR_tracking(x, u, xs, N, dt)
             elif SOLVER_METHOD == "iLQR":
                 x, u, K = self.iLQR(x, u, N, dt, options)
