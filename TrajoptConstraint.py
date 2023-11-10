@@ -10,8 +10,8 @@ class BoxConstraint:
 		lblen = len(lower_bounds)
 		ublen = len(upper_bounds)
 		if (lblen != constraint_size and lblen != 1) or (ublen != constraint_size and ublen != 1):
-		   print("[!]ERROR please enter bounds of the size of constraint or constant 1")
-		   exit()
+			print("[!]ERROR please enter bounds of the size of constraint or constant 1")
+			exit()
 		self.bounds = np.zeros((2*self.constraint_size))
 		self.bounds[:self.constraint_size] = lower_bounds
 		self.bounds[self.constraint_size:] = upper_bounds

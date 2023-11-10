@@ -80,3 +80,6 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# VSCode settings
+.vscode/
