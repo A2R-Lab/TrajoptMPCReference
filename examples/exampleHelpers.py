@@ -7,8 +7,40 @@ from TrajoptCost import TrajoptCost, QuadraticCost
 from TrajoptConstraint import TrajoptConstraint, BoxConstraint
 from TrajoptMPCReference import TrajoptMPCReference, SQPSolverMethods, MPCSolverMethods
 
+import matplotlib.pyplot as plt
 import numpy as np
 import copy
+
+def display(x: np.ndarray, x_lim: list[float] = [-20, 20], y_lim: list[float] = [-20, 20], title: str = ""):
+	fig = plt.figure()
+	ax = fig.add_subplot(111)
+	line1, = ax.plot([0, 5, 10], [0, 5, 10], 'b-')
+	ax.set_xlim(x_lim)
+	ax.set_ylim(y_lim)
+	# set suptitle as title
+	fig.suptitle(title)
+	N = x.shape[1]
+
+	for k in range(N):
+		print("State at time step ", k, " is: ", x[:,k])
+		# x[:,k] is the state at time step k
+		# the first number is the angle of the first joint
+		# the second number is the angle of the second joint
+		# draw the line with a length of 5
+		# add 90 degrees to the angle to make it point up
+		first_point = [0, 0]
+		second_point = [5*np.cos(x[0,k]-np.pi/2), 5*np.sin(x[0,k]-np.pi/2)]
+		third_point = [second_point[0] + 5*np.cos(x[0,k]+x[1,k]-np.pi/2), second_point[1] + 5*np.sin(x[0,k]+x[1,k]-np.pi/2)]
+		line1.set_xdata([first_point[0], second_point[0], third_point[0]])
+		line1.set_ydata([first_point[1], second_point[1], third_point[1]])
+		plt.title("Time Step: " + str(k))
+		fig.canvas.draw()
+		#fig.canvas.mpl_connect('close_event', _on_close)
+		fig.canvas.flush_events()
+		plt.pause(0.1)
+	
+	plt.show()
+
 
 def runSolversSQP(trajoptMPCReference: TrajoptMPCReference, N: int, dt: float, solver_methods: list[SQPSolverMethods], options = {}):
 	for solver in solver_methods:
@@ -24,6 +56,9 @@ def runSolversSQP(trajoptMPCReference: TrajoptMPCReference, N: int, dt: float, s
 		xs = copy.deepcopy(x[:,0])
 
 		x, u = trajoptMPCReference.SQP(x, u, N, dt, LINEAR_SYSTEM_SOLVER_METHOD = solver, options = options)
+
+		if options["display"]:
+			display(x, title="SQP Solver Method: " + solver.name)
 
 		print("Final State Trajectory")
 		print(x)
@@ -79,7 +114,10 @@ def runSolversMPC(trajoptMPCReference, N, dt, solver_methods, options = {}):
 		print(trajoptMPCReference.cost.xg)
 		print("-------------")
 
-		trajoptMPCReference.MPC(x, u, N, dt, SOLVER_METHOD = solver)
+		x, u = trajoptMPCReference.MPC(x, u, N, dt, SOLVER_METHOD = solver)
+
+		if options["display"]:
+			display(x, title="MPC Solver Method: " + solver.name)
 
 
 def runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, solver_methods, options = {}):
@@ -91,7 +129,7 @@ def runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, solver
 	print("Solving Unconstrained Problem")
 	print("-----------------------------")
 	trajoptMPCReference = TrajoptMPCReference(plant, cost)
-	runSolversMPC(trajoptMPCReference, N, dt, solver_methods)
+	runSolversMPC(trajoptMPCReference, N, dt, solver_methods, options)
 
 	print("---------------------------------")
 	print("---------------------------------")
