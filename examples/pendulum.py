@@ -26,6 +26,11 @@ options = {
     "display": True
 }
 
-runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, mpc_solver_methods, options)
-
 runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, sqp_solver_methods, options)
+
+options = {
+    "expected_reduction_min_SQP_DDP":-100, # needed for hard_constraints - TODO debug why
+    "display": False
+}
+
+runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, mpc_solver_methods, options)
