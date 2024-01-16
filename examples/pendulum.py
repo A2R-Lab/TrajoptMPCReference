@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 from exampleHelpers import *
 
-sqp_solver_methods = [SQPSolverMethods.N]#["N", "S", "PCG-J", "PCG-BJ", "PCG-SS"]
-mpc_solver_methods = [MPCSolverMethods.QP_PCG_SS] #["iLQR", "QP-N", "QP-S", "QP-PCG-J", "QP-PCG-BJ", "QP-PCG-SS"]
+sqp_solver_methods = [SQPSolverMethods.PCG_SN]#["N", "S", "PCG-J", "PCG-BJ", "PCG-SS"]
+mpc_solver_methods = [MPCSolverMethods.QP_PCG_SN] #["iLQR", "QP-N", "QP-S", "QP-PCG-J", "QP-PCG-BJ", "QP-PCG-SS"]
 
 plant = PendulumPlant()
 
@@ -21,16 +21,18 @@ hard_constraints.set_torque_limits([7.0],[-7.0],"ACTIVE_SET")
 soft_constraints = TrajoptConstraint(plant.get_num_pos(),plant.get_num_vel(),plant.get_num_cntrl(),N)
 soft_constraints.set_torque_limits([7.0],[-7.0],"AUGMENTED_LAGRANGIAN")
 
-options = {
-    "expected_reduction_min_SQP_DDP":-100, # needed for hard_constraints - TODO debug why
-    "display": True
-}
+# options = {
+#     "expected_reduction_min_SQP_DDP":-100, # needed for hard_constraints - TODO debug why
+#     "display": True
+# }
 
-runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, sqp_solver_methods, options)
+# runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, sqp_solver_methods, options)
 
 options = {
     "expected_reduction_min_SQP_DDP":-100, # needed for hard_constraints - TODO debug why
     "display": False
 }
+
+# runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, sqp_solver_methods, options)
 
 runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, mpc_solver_methods, options)

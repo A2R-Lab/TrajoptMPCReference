@@ -14,7 +14,8 @@ class SQPSolverMethods(enum.Enum):
     PCG_J = "PCG-J"
     PCG_BJ = "PCG-BJ"
     PCG_SS = "PCG-SS"
-
+    PCG_SN = "PCG-SN"
+    PRK_SS = "PRK-SS"
 
 class MPCSolverMethods(enum.Enum):
     iLQR = "iLQR"
@@ -23,6 +24,8 @@ class MPCSolverMethods(enum.Enum):
     QP_PCG_J = "QP-PCG-J"
     QP_PCG_BJ = "QP-PCG-BJ"
     QP_PCG_SS = "QP-PCG-SS"
+    QP_PCG_SN = "QP-PCG-SN"
+    QP_PRK_SS = "QP-PRK-SS"
 
 class TrajoptMPCReference:
     def __init__(self, plantObj:TrajoptPlant, costObj: TrajoptCost, constraintObj: TrajoptConstraint = None):
@@ -332,12 +335,14 @@ class TrajoptMPCReference:
         self.set_default_options(options)
         options_linSys = {'DEBUG_MODE': options['DEBUG_MODE_linSys']}
 
-        USING_PCG = LINEAR_SYSTEM_SOLVER_METHOD in [SQPSolverMethods.PCG_J, SQPSolverMethods.PCG_BJ, SQPSolverMethods.PCG_SS]
+        USING_PCG = LINEAR_SYSTEM_SOLVER_METHOD in [SQPSolverMethods.PCG_J, SQPSolverMethods.PCG_BJ, SQPSolverMethods.PCG_SS, SQPSolverMethods.PCG_SN, SQPSolverMethods.PRK_SS]
         if USING_PCG:
             options_linSys['exit_tolerance'] = options['exit_tolerance_linSys']
             options_linSys['max_iter'] = options['max_iter_linSys']
             options_linSys['RETURN_TRACE'] = options['RETURN_TRACE_linSys']
             options_linSys['preconditioner_type'] = LINEAR_SYSTEM_SOLVER_METHOD.value[4:]
+            options_linSys['use_RK'] = LINEAR_SYSTEM_SOLVER_METHOD.value[0:3] == 'PRK'
+            options_linSys['only_precon'] = False #LINEAR_SYSTEM_SOLVER_METHOD.value[4:] == 'SN'
 
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
@@ -805,7 +810,7 @@ class TrajoptMPCReference:
 
         while True:
 
-            if SOLVER_METHOD in [MPCSolverMethods.QP_N, MPCSolverMethods.QP_S, MPCSolverMethods.QP_PCG_J, MPCSolverMethods.QP_PCG_BJ, MPCSolverMethods.QP_PCG_SS]:
+            if SOLVER_METHOD in [MPCSolverMethods.QP_N, MPCSolverMethods.QP_S, MPCSolverMethods.QP_PCG_J, MPCSolverMethods.QP_PCG_BJ, MPCSolverMethods.QP_PCG_SS, MPCSolverMethods.QP_PCG_SN, MPCSolverMethods.QP_PRK_SS]:
                 options['max_iter_SQP_DDP'] = 5
                 sqp_solver = SQPSolverMethods(SOLVER_METHOD.value[3:])
                 x, u = self.SQP(x, u, N, dt, sqp_solver, options)
