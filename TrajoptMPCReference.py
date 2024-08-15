@@ -18,6 +18,7 @@ class SQPSolverMethods(enum.Enum):
 
 class MPCSolverMethods(enum.Enum):
     iLQR = "iLQR"
+    DDP = "DDP"
     QP_N = "QP-N"
     QP_S = "QP-S"
     QP_PCG_J = "QP-PCG-J"
@@ -68,6 +69,8 @@ class TrajoptMPCReference:
         options.setdefault('rho_init_SQP_DDP', 0.001)
         options.setdefault('expected_reduction_min_SQP_DDP', 0.05)
         options.setdefault('expected_reduction_max_SQP_DDP', 3)
+        # DDP/iLQR lag
+        options.setdefault('DDP_flag', False)
         # SQP only options
         options.setdefault('merit_factor_SQP', 1.5)
         options.setdefault('RETURN_TRACE_SQP', False)
@@ -509,6 +512,164 @@ class TrajoptMPCReference:
         
         return x, u
 
+    def next_iteration_setup(self, x, u, dt, N, A, B, H, g, J, fxx = None, fux = None):
+        nx = self.plant.get_num_pos() + self.plant.get_num_vel()
+        #
+        # compute new gradients
+        #
+        for k in range(N-1):
+            A[:,:,k], B[:,:,k] = self.plant.integrator(x[:,k], u[:,k], dt, return_gradient = True)
+            H[:,:,k] = self.cost.hessian(x[:,k], u[:,k], k)
+            g[:,k] = self.cost.gradient(x[:,k], u[:,k], k)
+            if (fxx is not None) and (fux is not None):
+                fxx[:,:,:,k], fux[:,:,:,k] = self.plant.integrator(x[:,k], u[:,k], dt, return_hessian = True)
+        H[0:nx,0:nx,N-1] = self.cost.hessian(x[:,N-1], timestep = N-1)
+        g[0:nx,N-1] = self.cost.gradient(x[:,N-1], timestep = N-1)
+        #
+        # add soft constraints (if applicable)
+        #
+        for k in range(N-1):
+            if self.other_constraints.total_soft_constraints(timestep = k) > 0:
+                J += self.other_constraints.value_soft_constraints(x[:,k], u[:,k], k)
+                gck = self.other_constraints.jacobian_soft_constraints(x[:,k], u[:,k], k)
+                g[:,k] += gck[:,0]
+                H[:,:,k] += np.outer(gck,gck)
+        if self.other_constraints.total_soft_constraints(timestep = N-1) > 0:
+            J += self.other_constraints.value_soft_constraints(x[:,N-1], timestep = N-1)
+            gcNm1 = self.other_constraints.jacobian_soft_constraints(x[:,N-1], timestep = N-1)
+            g[0:nx,N-1] += gcNm1[:,0]
+            H[0:nx,0:nx,N-1] += np.outer(gcNm1,gcNm1)
+        return J
+
+    def backward_pass(self, K_new, du_new, A, B, H, g, rho, N, options, fxx = None, fux = None):
+        error = False
+        delta_J_expected_1 = 0
+        delta_J_expected_2 = 0   
+        nx = self.plant.get_num_pos() + self.plant.get_num_vel()
+        #
+        # Initialize CTG
+        #
+        P = H[0:nx,0:nx,N-1]
+        p = g[0:nx,N-1]
+        for k in range(N-2,-1,-1):
+            #
+            # Backpropogate CTG
+            #
+            Hxxk = np.matmul(A[:,:,k].transpose(),np.matmul(P,A[:,:,k])) + H[0:nx,0:nx,k]
+            gxk = np.matmul(A[:,:,k].transpose(),p) + g[0:nx,k]
+            guk = np.matmul(B[:,:,k].transpose(),p) + g[nx:,k]
+            if options['state_regularization_DDP']:
+                Preg = P + rho*np.eye(nx)
+                Huuk = np.matmul(B[:,:,k].transpose(),np.matmul(Preg,B[:,:,k])) + H[nx:,nx:,k]
+                Huxk = np.matmul(B[:,:,k].transpose(),np.matmul(Preg,A[:,:,k])) + H[nx:,0:nx,k]
+            else:
+                Huuk = np.matmul(B[:,:,k].transpose(),np.matmul(P,B[:,:,k])) + H[nx:,nx:,k] + rho*np.eye(nu)
+                Huxk = np.matmul(B[:,:,k].transpose(),np.matmul(P,A[:,:,k])) + H[nx:,0:nx,k]
+            #
+            # Add Hessians (optional)
+            if (fxx is not None) and (fux is not None):
+                Hxxk += np.tensordot(p, fxx[:,:,:,k], axes=1)
+                Huxk += np.tensordot(p, fux[:,:,:,k], axes=1)
+                # FYI the tensordot with axes=1 is the same as the below
+                # def tensordot_axes1(vec,tens):
+                #     output = np.zeros((tens.shape[1],tens.shape[2]))
+                #     for tensId in range(tens.shape[2]):
+                #         for colId in range(tens.shape[1]):
+                #             output[colId,tensId] = np.dot(p,tens[:,colId,tensId])
+                #     return output
+            #
+            #
+            # Invert Huu block
+            #
+            try:
+                HuukInv = np.linalg.inv(Huuk)
+            except np.linalg.LinAlgError:
+                if options['DEBUG_MODE_SQP_DDP']:
+                    print("Error in backward pass!")
+                error = True
+                break
+            #
+            # Compute feedback and next CTG as well as expected cost
+            #
+            K_new[:,:,k] = -np.matmul(HuukInv,Huxk)
+            du_new[:,k] = -np.matmul(HuukInv,guk[:])
+            P = Hxxk + np.matmul(K_new[:,:,k].transpose(),np.matmul(Huuk,K_new[:,:,k])) + np.matmul(K_new[:,:,k].transpose(),Huxk) + np.matmul(Huxk.transpose(),K_new[:,:,k])
+            p = gxk + np.matmul(K_new[:,:,k].transpose(),np.matmul(Huuk,du_new[:,k])) + np.matmul(K_new[:,:,k].transpose(),guk) + np.matmul(Huxk.transpose(),du_new[:,k])
+            delta_J_expected_1 += np.matmul(du_new[:,k].transpose(),guk)
+            delta_J_expected_2 +=  np.matmul(du_new[:,k].transpose(),np.matmul(Huuk,du_new[:,k]))
+
+        return error, delta_J_expected_1, delta_J_expected_2
+    
+    def forward_pass(self, x, u, K, du, J, dt, N, rho, drho, delta_J_expected_1, delta_J_expected_2, options):
+        error = False
+        alpha = 1
+        while 1:
+            #
+            # Simulate forward
+            #
+            x_new = copy.deepcopy(x)
+            u_new = copy.deepcopy(u)
+            J_new = 0
+            for k in range(N-1):
+                u_new_k = u[:,k] + alpha*du[:,k] + np.matmul(K[:,:,k],(x_new[:,k] - x[:,k]))
+                u_new[:,k:k+1] = np.reshape(u_new_k, (u_new_k.shape[0],1))
+                
+                x_new_k = self.plant.integrator(x_new[:,k], u_new[:,k], dt)
+                x_new[:,k+1:k+2] = np.reshape(x_new_k, (x_new_k.shape[0],1))
+                
+                J_new += self.cost.value(x_new[:,k], u_new[:,k], k)
+            J_new += self.cost.value(x_new[:,N-1], timestep = N-1)
+            #
+            # Add soft constraints if applicable
+            #
+            if self.other_constraints.total_soft_constraints() > 0:
+                for k in range(N-1):
+                    J_new += self.other_constraints.value_soft_constraints(x_new[:,k], u_new[:,k], k)
+                J_new += self.other_constraints.value_soft_constraints(x_new[:,N-1], timestep = N-1)
+            #
+            # Compute change in cost
+            #
+            delta_J = J - J_new
+            delta_J_expected = -alpha*delta_J_expected_1 + 0.5*alpha*alpha*delta_J_expected_2
+            if not delta_J_expected == 0:
+                delta_J_ratio = delta_J / delta_J_expected
+            else:
+                delta_J_ratio = options["expected_reduction_min_SQP_DDP"]
+            #
+            # If succeeded accept new trajectory
+            #
+            if delta_J >= 0 and delta_J_ratio >= options['expected_reduction_min_SQP_DDP'] \
+                            and delta_J_ratio <= options['expected_reduction_max_SQP_DDP']:
+                x = x_new
+                u = u_new
+                J = J_new
+                rho, drho = self.reduce_regularization(rho, drho, options)
+                if options['DEBUG_MODE_SQP_DDP']:
+                    print("Iteration[", iteration, "] with cost[", J, "] and delta_J_ratio[", delta_J_ratio, "]")
+                    print("x final:")
+                    print(x[:,N-1])
+                break
+            #
+            # If failed decrease alpha and try line search again
+            #
+            elif alpha > options['alpha_min_SQP_DDP']:
+                alpha *= options['alpha_factor_SQP_DDP']
+                if options['DEBUG_MODE_SQP_DDP']:
+                    print("Rejected with delta_J[", delta_J, "] and delta_J_ratio[", delta_J_ratio, "]")
+            #
+            # If failed the whole line search report the error
+            #
+            else:
+                error = True
+                if options['DEBUG_MODE_SQP_DDP']:
+                    print("Line search failed")
+                break
+        return error, x, u, J, delta_J, rho, drho
+
+    def DDP(self, x: np.ndarray, u: np.ndarray, N: int, dt: float, options):
+        options["DDP_flag"] = True
+        return self.iLQR(x, u, N, dt, options)
+
     def iLQR(self, x: np.ndarray, u: np.ndarray, N: int, dt: float, options):
         self.set_default_options(options)
 
@@ -534,156 +695,43 @@ class TrajoptMPCReference:
             g = np.zeros((nq+nv+nu,N))
             A = np.zeros((nq+nv,nq+nv,N-1))
             B = np.zeros((nq+nv,nu,N-1))
+            fxx = None
+            fux = None
+            if options["DDP_flag"]:
+                fxx = np.zeros((nq+nv,nq+nv,nq+nv,N-1))
+                fux = np.zeros((nq+nv,nu,nq+nv,N-1))
+            # get initial cost
             for k in range(N-1):
                 J += self.cost.value(x[:,k], u[:,k], k)
-                g[:,k] = self.cost.gradient(x[:,k], u[:,k], k)
-                H[:,:,k] = self.cost.hessian(x[:,k], u[:,k], k)
-                A[:,:,k], B[:,:,k] = self.plant.integrator(x[:,k], u[:,k], dt, return_gradient = True)
             J += self.cost.value(x[:,N-1], timestep = N-1)
-            g[0:nx,N-1] = self.cost.gradient(x[:,N-1], timestep = N-1)
-            H[0:nx,0:nx,N-1] = self.cost.hessian(x[:,N-1], timestep = N-1)
-
-            #
-            # add soft constraints if applicable
-            #
-            for k in range(N-1):
-                if self.other_constraints.total_soft_constraints(timestep = k) > 0:
-                    J += self.other_constraints.value_soft_constraints(x[:,k], u[:,k], k)
-                    gck = self.other_constraints.jacobian_soft_constraints(x[:,k], u[:,k], k)
-                    g[:,k] += gck[:,0]
-                    H[:,:,k] += np.outer(gck,gck)
-            if self.other_constraints.total_soft_constraints(timestep = N-1) > 0:
-                J += self.other_constraints.value_soft_constraints(x[:,N-1], timestep = N-1)
-                gcNm1 = self.other_constraints.jacobian_soft_constraints(x[:,N-1], timestep = N-1)
-                g[0:nx,N-1] += gcNm1[:,0]
-                H[0:nx,0:nx,N-1] += np.outer(gcNm1,gcNm1)
-
+            # get initial gradients and apply soft constraints (if applicable)
+            J = self.next_iteration_setup(x, u, dt, N, A, B, H, g, J, fxx, fux)
+            delta_J = J
 
             if options['DEBUG_MODE_SQP_DDP']:
                 print("Initial Cost: ", J)
 
             # start the main loop
             while 1:
+                
                 #
                 # Do backwards pass to compute du and K and expected cost reduction
                 #
-                error = False
-                delta_J_expected_1 = 0
-                delta_J_expected_2 = 0
                 K_new = np.zeros(K.shape)
                 du_new = np.zeros(du.shape)
-                
-                #
-                # Initialize CTG
-                #
-                P = H[0:nx,0:nx,N-1]
-                p = g[0:nx,N-1]
-                for k in range(N-2,-1,-1):
-                    #
-                    # Backpropogate CTG
-                    #
-                    Hxxk = np.matmul(A[:,:,k].transpose(),np.matmul(P,A[:,:,k])) + H[0:nq+nv,0:nq+nv,k]
-                    Huuk = np.matmul(B[:,:,k].transpose(),np.matmul(P,B[:,:,k])) + H[nq+nv:,nq+nv:,k]
-                    Huxk = np.matmul(B[:,:,k].transpose(),np.matmul(P,A[:,:,k])) + H[nq+nv:,0:nq+nv,k]
-                    gxk = np.matmul(A[:,:,k].transpose(),p) + g[0:nq+nv,k]
-                    guk = np.matmul(B[:,:,k].transpose(),p) + g[nq+nv:,k]
-                    if options['state_regularization_DDP']:
-                        Preg = P + rho*np.eye(nq+nv)
-                        Huuk = np.matmul(B[:,:,k].transpose(),np.matmul(Preg,B[:,:,k])) + H[nq+nv:,nq+nv:,k]
-                        Huxk = np.matmul(B[:,:,k].transpose(),np.matmul(Preg,A[:,:,k])) + H[nq+nv:,0:nq+nv,k]
-                    else:
-                        Huuk_adj = Huuk + rho*np.eye(nu)
-                        Huxk_adj = Huxk
-                    #
-                    # Invert Huu block
-                    #
-                    try:
-                        HuukInv = np.linalg.inv(Huuk)
-                    except np.linalg.LinAlgError:
-                        if options['DEBUG_MODE_SQP_DDP']:
-                            print("Error in backward pass!")
-                        error = True
-                        break
-                    #
-                    # Compute feedback and next CTG as well as expected cost
-                    #
-                    K_new[:,:,k] = -np.matmul(HuukInv,Huxk)
-                    du_new[:,k] = -np.matmul(HuukInv,guk[:])
-                    P = Hxxk + np.matmul(K_new[:,:,k].transpose(),np.matmul(Huuk,K_new[:,:,k])) + np.matmul(K_new[:,:,k].transpose(),Huxk) + np.matmul(Huxk.transpose(),K_new[:,:,k])
-                    p = gxk + np.matmul(K_new[:,:,k].transpose(),np.matmul(Huuk,du_new[:,k])) + np.matmul(K_new[:,:,k].transpose(),guk) + np.matmul(Huxk.transpose(),du_new[:,k])
-                    delta_J_expected_1 += np.matmul(du_new[:,k].transpose(),guk)
-                    delta_J_expected_2 +=  np.matmul(du_new[:,k].transpose(),np.matmul(Huuk,du_new[:,k]))
-
+                error, delta_J_expected_1_new, delta_J_expected_2_new = self.backward_pass(K_new, du_new, A, B, H, g, rho, N, options, fxx, fux)
                 if not error:
-                    du = du_new
                     K = K_new
+                    du = du_new
+                    delta_J_expected_1 = delta_J_expected_1_new
+                    delta_J_expected_2 = delta_J_expected_2_new
                 
                 #
                 # Do forwards pass to compute new x, u, J (with line search)
                 #
                 if not error:
-                    alpha = 1
-                    while 1:
-                        #
-                        # Simulate forward
-                        #
-                        x_new = copy.deepcopy(x)
-                        u_new = copy.deepcopy(u)
-                        J_new = 0
-                        for k in range(N-1):
-                            u_new_k = u[:,k] + alpha*du[:,k] + np.matmul(K[:,:,k],(x_new[:,k] - x[:,k]))
-                            u_new[:,k:k+1] = np.reshape(u_new_k, (u_new_k.shape[0],1))
-                            
-                            x_new_k = self.plant.integrator(x_new[:,k], u_new[:,k], dt)
-                            x_new[:,k+1:k+2] = np.reshape(x_new_k, (x_new_k.shape[0],1))
-                            
-                            J_new += self.cost.value(x_new[:,k], u_new[:,k], k)
-                        J_new += self.cost.value(x_new[:,N-1], timestep = N-1)
-                        #
-                        # Add soft constraints if applicable
-                        #
-                        if self.other_constraints.total_soft_constraints() > 0:
-                            for k in range(N-1):
-                                J_new += self.other_constraints.value_soft_constraints(x_new[:,k], u_new[:,k], k)
-                            J_new += self.other_constraints.value_soft_constraints(x_new[:,N-1], timestep = N-1)
-                        #
-                        # Compute change in cost
-                        #
-                        delta_J = J - J_new
-                        delta_J_expected = -alpha*delta_J_expected_1 + 0.5*alpha*alpha*delta_J_expected_2
-                        if not delta_J_expected == 0:
-                            delta_J_ratio = delta_J / delta_J_expected
-                        else:
-                            delta_J_ratio = options["expected_reduction_min_SQP_DDP"]
-                        #
-                        # If succeeded accept new trajectory
-                        #
-                        if delta_J >= 0 and delta_J_ratio >= options['expected_reduction_min_SQP_DDP'] \
-                                        and delta_J_ratio <= options['expected_reduction_max_SQP_DDP']:
-                            x = x_new
-                            u = u_new
-                            J = J_new
-                            rho, drho = self.reduce_regularization(rho, drho, options)
-                            if options['DEBUG_MODE_SQP_DDP']:
-                                print("Iteration[", iteration, "] with cost[", J, "] and delta_J_ratio[", delta_J_ratio, "]")
-                                print("x final:")
-                                print(x[:,N-1])
-                            break
-                        #
-                        # If failed decrease alpha and try line search again
-                        #
-                        elif alpha > options['alpha_min_SQP_DDP']:
-                            alpha *= options['alpha_factor_SQP_DDP']
-                            if options['DEBUG_MODE_SQP_DDP']:
-                                print("Rejected with delta_J[", delta_J, "] and delta_J_ratio[", delta_J_ratio, "]")
-                        #
-                        # If failed the whole line search report the error
-                        #
-                        else:
-                            error = True
-                            if options['DEBUG_MODE_SQP_DDP']:
-                                print("Line search failed")
-                            break
+                    error, x, u, J, delta_J, rho, drho = self.forward_pass(x, u, K, du, J, dt, N, rho, drho, delta_J_expected_1, delta_J_expected_2, options)
+                    
                 #
                 # Check for exit (or error) and adjust accordingly
                 #
@@ -691,28 +739,9 @@ class TrajoptMPCReference:
                 if exit_flag:
                     break
                 #
-                # If doing new loop compute new gradients
+                # If doing new loop compute new gradients and add soft constraints (if applicable)
                 #
-                for k in range(N-1):
-                    A[:,:,k], B[:,:,k] = self.plant.integrator(x[:,k], u[:,k], dt, return_gradient = True)
-                    H[:,:,k] = self.cost.hessian(x[:,k], u[:,k], k)
-                    g[:,k] = self.cost.gradient(x[:,k], u[:,k], k)
-                H[0:nx,0:nx,N-1] = self.cost.hessian(x[:,N-1], timestep = N-1)
-                g[0:nx,N-1] = self.cost.gradient(x[:,N-1], timestep = N-1)
-                #
-                # add soft constraints if applicable
-                #
-                for k in range(N-1):
-                    if self.other_constraints.total_soft_constraints(timestep = k) > 0:
-                        J += self.other_constraints.value_soft_constraints(x[:,k], u[:,k], k)
-                        gck = self.other_constraints.jacobian_soft_constraints(x[:,k], u[:,k], k)
-                        g[:,k] += gck[:,0]
-                        H[:,:,k] += np.outer(gck,gck)
-                if self.other_constraints.total_soft_constraints(timestep = N-1) > 0:
-                    J += self.other_constraints.value_soft_constraints(x[:,N-1], timestep = N-1)
-                    gcNm1 = self.other_constraints.jacobian_soft_constraints(x[:,N-1], timestep = N-1)
-                    g[0:nx,N-1] += gcNm1[:,0]
-                    H[0:nx,0:nx,N-1] += np.outer(gcNm1,gcNm1)
+                J = self.next_iteration_setup(x, u, dt, N, A, B, H, g, J, fxx, fux)
             
             #
             # Outer loop updates of soft constraint hyperparameters (where appropriate)
@@ -810,11 +839,14 @@ class TrajoptMPCReference:
                 sqp_solver = SQPSolverMethods(SOLVER_METHOD.value[3:])
                 x, u = self.SQP(x, u, N, dt, sqp_solver, options)
                 K = self.LQR_tracking(x, u, xs, N, dt)
-            elif SOLVER_METHOD == "iLQR":
+            elif SOLVER_METHOD == MPCSolverMethods.iLQR:
                 x, u, K = self.iLQR(x, u, N, dt, options)
+            elif SOLVER_METHOD == MPCSolverMethods.DDP:
+                x, u, K = self.DDP(x, u, N, dt, options)
             else:
                 print("Invalid solver options are:\n", \
-                          "iLQR      : Standard Iterated Quadratic Regulator\n", \
+                          "iLQR      : Iterated Linear Quadratic Regulator\n", \
+                          "DDP      : Differential Dynamic Programming\n", \
                           "QP-N      : SQP with Standard Backslash\n", \
                           "QP-S      : SQP with Schur Complement Backslash\n", \
                           "QP-PCG-0  : SQP with PCG with no preconditioner\n", \

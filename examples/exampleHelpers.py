@@ -83,21 +83,23 @@ def runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, solver
 	trajoptMPCReference = TrajoptMPCReference(plant, cost)
 	runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options)
 
-	print("---------------------------------")
-	print("---------------------------------")
-	print(" Solving Constrained Problem Hard")
-	print("---------------------------------")
-	trajoptMPCReference = TrajoptMPCReference(plant, cost, hard_constraints)
-	runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options)
+	if (hard_constraints is not None):
+		print("---------------------------------")
+		print("---------------------------------")
+		print(" Solving Constrained Problem Hard")
+		print("---------------------------------")
+		trajoptMPCReference = TrajoptMPCReference(plant, cost, hard_constraints)
+		runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options)
 
-	print("---------------------------------")
-	print("---------------------------------")
-	print(" Solving Constrained Problem Soft")
-	print("---------------------------------")
-	trajoptMPCReference = TrajoptMPCReference(plant, cost, soft_constraints)
-	runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options)
+	if (soft_constraints is not None):
+		print("---------------------------------")
+		print("---------------------------------")
+		print(" Solving Constrained Problem Soft")
+		print("---------------------------------")
+		trajoptMPCReference = TrajoptMPCReference(plant, cost, soft_constraints)
+		runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options)
 
-def runSolversMPC(trajoptMPCReference, N, dt, solver_methods, options = {}):
+def runSolversMPC(trajoptMPCReference, N, dt, solver_methods, x0 = None, u0 = None, options = {}):
 	for solver in solver_methods:
 		print("-----------------------------")
 		print("Solving with method: ", solver)
@@ -106,8 +108,12 @@ def runSolversMPC(trajoptMPCReference, N, dt, solver_methods, options = {}):
 		nv = trajoptMPCReference.plant.get_num_vel()
 		nx = nq + nv
 		nu = trajoptMPCReference.plant.get_num_cntrl()
-		x = np.zeros((nx,N))
-		u = np.zeros((nu,N-1))
+		x = x0
+		u = u0
+		if (x0 is None):
+			x = np.zeros((nx,N))
+		if (u0 is None):
+			u = np.zeros((nu,N-1))
 		xs = copy.deepcopy(x[:,0])
 
 		print("Goal Position")
@@ -120,7 +126,7 @@ def runSolversMPC(trajoptMPCReference, N, dt, solver_methods, options = {}):
 			display(x, title="MPC Solver Method: " + solver.name)
 
 
-def runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, solver_methods, options = {}):
+def runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, solver_methods, x0 = None, u0 = None, options = {}):
 	print("-----------------------------")
 	print("-----------------------------")
 	print("    Running MPC Example      ")
@@ -129,18 +135,20 @@ def runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, solver
 	print("Solving Unconstrained Problem")
 	print("-----------------------------")
 	trajoptMPCReference = TrajoptMPCReference(plant, cost)
-	runSolversMPC(trajoptMPCReference, N, dt, solver_methods, options)
+	runSolversMPC(trajoptMPCReference, N, dt, solver_methods, x0, u0, options)
 
-	print("---------------------------------")
-	print("---------------------------------")
-	print(" Solving Constrained Problem Hard")
-	print("---------------------------------")
-	trajoptMPCReference = TrajoptMPCReference(plant, cost, hard_constraints)
-	runSolversMPC(trajoptMPCReference, N, dt, solver_methods, options)
+	if (hard_constraints is not None):
+		print("---------------------------------")
+		print("---------------------------------")
+		print(" Solving Constrained Problem Hard")
+		print("---------------------------------")
+		trajoptMPCReference = TrajoptMPCReference(plant, cost, hard_constraints)
+		runSolversMPC(trajoptMPCReference, N, dt, solver_methods, x0, u0, options)
 
-	print("---------------------------------")
-	print("---------------------------------")
-	print(" Solving Constrained Problem Soft")
-	print("---------------------------------")
-	trajoptMPCReference = TrajoptMPCReference(plant, cost, soft_constraints)
-	runSolversMPC(trajoptMPCReference, N, dt, solver_methods, options)
+	if (soft_constraints is not None):
+		print("---------------------------------")
+		print("---------------------------------")
+		print(" Solving Constrained Problem Soft")
+		print("---------------------------------")
+		trajoptMPCReference = TrajoptMPCReference(plant, cost, soft_constraints)
+		runSolversMPC(trajoptMPCReference, N, dt, solver_methods, x0, u0, options)

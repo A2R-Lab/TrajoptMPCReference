@@ -1,5 +1,6 @@
 import numpy as np
 import random
+import copy
 from GRiD import RBDReference
 from GRiD import URDFParser
 
@@ -45,6 +46,37 @@ class TrajoptPlant:
 	# Child class must implement #
 	##############################
 
+	###################################
+	# Placeholder Finite Diff Hessian #
+	###################################
+	def forward_dynamics_hessian(self, x: np.ndarray, u: np.ndarray):
+		nq = self.get_num_pos()
+		nv = self.get_num_vel()
+		nu = self.get_num_cntrl()
+		eps = 1e-4
+		hessian = np.zeros((nq,nq+nv+nu,nq+nv+nu))
+		for i in range(nq+nv):
+			x_p = copy.deepcopy(x)
+			x_m = copy.deepcopy(x)
+			x_p[i] += eps
+			x_m[i] -= eps
+			grad_p = self.forward_dynamics_gradient(x_p,u)
+			grad_m = self.forward_dynamics_gradient(x_m,u)
+			delta = grad_p - grad_m
+			delta /= (2*eps)
+			hessian[:,:,i] = np.squeeze(delta)
+		for i in range(nu):
+			u_p = copy.deepcopy(u)
+			u_m = copy.deepcopy(u)
+			u_p[i] += eps
+			u_m[i] -= eps
+			grad_p = self.forward_dynamics_gradient(x,u_p)
+			grad_m = self.forward_dynamics_gradient(x,u_m)
+			delta = grad_p - grad_m
+			delta /= (2*eps)
+			hessian[:,:,nq+nv+i] = np.squeeze(delta)
+		return hessian
+
 	#  [ v ;
 	#   qdd ]
 	def qdd_to_xdot(self, xk: np.ndarray, qdd: np.ndarray):
@@ -62,7 +94,40 @@ class TrajoptPlant:
 		top = np.hstack((np.zeros((nq,nq)), np.eye(nv), np.zeros((nq,m))))
 		return np.vstack((top, dqdd))
 
-	def integrator(self, xk: np.ndarray, uk: np.ndarray, dt: float, return_gradient: bool = False):
+	# Tensor of dxdot_dq->dv->du
+	# [ 0          ; 0          ; 0
+	#   dqdd/dq2   ; dqdd/dv_dq ; dqdd/du_dq ]
+	# [ 0          ; 0          ; 0
+	#   dqdd/dq_dv ; dqdd/dv2   ; dqdd/du_dv ]
+	# [ 0          ; 0          ; 0
+	#   dqdd/dq_du ; dqdd/dv_du ; dqdd/du2 ]
+	# however note that du_dv, dq_du, dv_du, du2 = 0 so we equivalently have
+	# [ 0          ; 0          ; 0
+	#   dqdd/dq2   ; dqdd/dv_dq ; dqdd/du_dq ]
+	# [ 0          ; 0          ; 0
+	#   dqdd/dq_dv ; dqdd/dv2   ; 0 ]
+	# [ 0          ; 0          ; 0
+	#   0          ; 0          ; 0 ]
+	def d2qdd_to_d2xdot_simple(self, d2qdd):
+		nq = self.get_num_pos()
+		nx = nq + self.get_num_vel()
+		n = nx + self.get_num_cntrl()
+		return np.vstack((np.zeros((nq,n,n)),d2qdd))
+		# dqdd_dq2, dqdd_dq_dv, dqdd_dv_dq, dqdd_dv2, dqdd_du_dq
+		# # first section 1 (dq)
+		# dq_d2_bottom = np.hstack((dqdd_dq2, dqdd_dv_dq, dqdd_du_dq))
+		# d2_top = np.zeros(dq_d2_bottom.shape)
+		# dq_d2 = np.vstack((d2_top,dq_d2_bottom))
+		# # then section 2 (dv)
+		# dv_d2_bottom = np.hstack((dqdd_dq_dv, dqdd_dv2, np.zeros(dqdd_du_dq.shape)))
+		# dq_d2 = np.vstack((d2_top,dv_d2_bottom))
+		# # then section 3 (du)
+		# du_d2 = np.vstack((d2_top,d2_top))
+		# # then tensor connect the three sections
+		# dx2 = np.dstack((dq_d2,dv_d2,du_d2))
+		return dx2
+
+	def integrator(self, xk: np.ndarray, uk: np.ndarray, dt: float, return_gradient: bool = False, return_hessian: bool = False):
 		n = len(xk)
 
 		if self.integrator_type == -1: # hard coded into model
@@ -77,14 +142,22 @@ class TrajoptPlant:
 			qdd = self.forward_dynamics(xk,uk)
 			xdot = self.qdd_to_xdot(xk, qdd)
 			xkp1 = xk + dt*xdot
-			if not return_gradient:
-				return xkp1 #np.reshape(xkp1, (xkp1.shape[0],1))[:,0]
-			else:
+			if not return_gradient and not return_hessian:
+				return xkp1
+			elif not return_hessian:
 				dqdd = self.forward_dynamics_gradient(xk,uk)
 				dxdot = self.dqdd_to_dxdot(dqdd)
 				A = np.eye(n) + dt*dxdot[:,0:n]
 				B = dt*dxdot[:,n:]
 				return A, B
+			else:
+				d2qdd = self.forward_dynamics_hessian(xk,uk)
+				dx2 = dt*self.d2qdd_to_d2xdot_simple(d2qdd)
+				nx = self.get_num_pos() + self.get_num_vel()
+				#return dxx, dux as others are zero
+				fxx = dx2[:,:nx,:nx]
+				fux = dx2[:,nx:,:nx]
+				return (dx2[:,:nx,:nx], dx2[:,nx:,:nx])
 		
 		elif self.integrator_type == 1: # semi-implicit euler
 			#  vkp1 = vk + dt*qddk
@@ -97,23 +170,25 @@ class TrajoptPlant:
 			qdd = self.forward_dynamics(xk,uk)
 			vkp1 = xk[nq:]  + dt*qdd
 			qkp1 = xk[0:nq] + dt*vkp1
-			if not return_gradient:
+			if not return_gradient and not return_hessian:
 				return np.hstack((qkp1,vkp1)).transpose()
-			else:
+			elif not return_hessian:
 				dqdd = self.forward_dynamics_gradient(xk,uk)
 				zIz = np.hstack((np.zeros((nq,nq)),np.eye(nq),np.zeros((nq,nu))))
 				Iz = np.hstack((np.eye(nq+nv),np.zeros((nq+nv,nu))))
 				AB = Iz + dt*np.vstack((zIz + dt*dqdd, dqdd))
 				return AB[:,0:nq+nv], AB[:,nq+nv:]
+			else:
+				print("[!] Error Hessians Not Implemented Yet For This Integrator!")
 		
 		elif self.integrator_type == 2: # midpoint
 			xdot1 = self.qdd_to_xdot(xk, self.forward_dynamics(xk,uk))
 			midpoint = xk + 0.5*dt*xdot1
 			xdot2 = self.qdd_to_xdot(xk, self.forward_dynamics(midpoint,uk))
 			xkp1 = xk + dt*xdot2
-			if not return_gradient:
+			if not return_gradient and not return_hessian:
 				return xkp1
-			else:
+			elif not return_hessian:
 				dxdot1 = self.dqdd_to_dxdot(self.forward_dynamics_gradient(xk,uk))
 				A1 = np.eye(n) + 0.5*dt*dxdot1[:,0:n]
 				B1 = 0.5*dt*dxdot1[:,n:]
@@ -125,6 +200,8 @@ class TrajoptPlant:
 				A = np.matmul(A2,A1)
 				B = np.matmul(A2,B1) + B2
 				return A, B
+			else:
+				print("[!] Error Hessians Not Implemented Yet For This Integrator!")
 
 		elif self.integrator_type == 3: # rk3
 			xdot1 = self.qdd_to_xdot(xk, self.forward_dynamics(xk,uk))
@@ -133,9 +210,9 @@ class TrajoptPlant:
 			point2 = xk + 0.75*dt*xdot2
 			xdot3 = self.qdd_to_xdot(xk, self.forward_dynamics(point2,uk))
 			xkp1 = xk + (dt/9)*(2*xdot1 + 3*xdot2 + 4*xdot3)
-			if not return_gradient:
+			if not return_gradient and not return_hessian:
 				return xkp1
-			else:
+			elif not return_hessian:
 				dxdot1 = self.dqdd_to_dxdot(self.forward_dynamics_gradient(xk,uk))
 				A1 = np.eye(n) + 2/9*dt*dxdot1[:,0:n]
 				B1 = 2/9*dt*dxdot1[:,n:]
@@ -151,6 +228,8 @@ class TrajoptPlant:
 				A = np.matmul(A3,np.matmul(A2,A1))
 				B = np.matmul(A3,np.matmul(A2,B1)) + np.matmul(A3,B2) + B3
 				return A,B
+			else:
+				print("[!] Error Hessians Not Implemented Yet For This Integrator!")
 		
 		elif self.integrator_type == 4: # rk4
 			xdot1 = self.qdd_to_xdot(xk, self.forward_dynamics(xk,uk))
@@ -161,9 +240,9 @@ class TrajoptPlant:
 			point3 = xk + dt*xdot3
 			xdot4 = self.qdd_to_xdot(xk, self.forward_dynamics(point3,uk))
 			xkp1 = xk + (dt/6)*(xdot1 + 2*xdot2 + 2*xdot3 + xdot4)
-			if not return_gradient:
+			if not return_gradient and not return_hessian:
 				return xkp1
-			else:
+			elif not return_hessian:
 				dxdot1 = self.dqdd_to_dxdot(self.forward_dynamics_gradient(xk,uk))
 				A1 = np.eye(n) + 1/6*dt*dxdot1[:,0:n]
 				B1 = 1/6*dt*dxdot1[:,n:]
@@ -182,8 +261,9 @@ class TrajoptPlant:
 				
 				A = np.matmul(A4,np.matmul(A3,np.matmul(A2,A1)))
 				B = np.matmul(A4,np.matmul(A3,np.matmul(A2,B1))) + np.matmul(A4,np.matmul(A3,B2)) + np.matmul(A4,B3) + B4
-				
 				return A,B
+			else:
+				print("[!] Error Hessians Not Implemented Yet For This Integrator!")
 
 class DoubleIntegratorPlant(TrajoptPlant):
 	def __init__(self, integrator_type: int = 0, options = {}):
@@ -291,9 +371,9 @@ class CartPolePlant(TrajoptPlant):
 class URDFPlant(TrajoptPlant):
 	def __init__(self, integrator_type = 0, options = {}):
 		super().__init__(integrator_type, options, True)
-		parser = URDFParser()
+		parser = URDFParser.URDFParser()
 		self.robot = parser.parse(options['path_to_urdf'])
-		self.rbdReference = RBDReference(self.robot)
+		self.rbdReference = RBDReference.RBDReference(self.robot)
 
 	def forward_dynamics(self, x: np.ndarray, u: np.ndarray):
 		nq = self.get_num_pos()
