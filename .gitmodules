@@ -4,3 +4,6 @@
 [submodule "GRiD"]
 	path = GRiD
 	url = https://github.com/A2R-Lab/GRiD
+[submodule "BCHOL-python"]
+	path = BCHOL-python
+	url = https://github.com/A2R-Lab/BCHOL-python.git
