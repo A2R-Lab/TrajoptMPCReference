@@ -6,6 +6,10 @@ from TrajoptPlant import TrajoptPlant, DoubleIntegratorPlant, PendulumPlant, Car
 from TrajoptCost import TrajoptCost, QuadraticCost
 from TrajoptConstraint import TrajoptConstraint, BoxConstraint
 PCG = importlib.import_module("GBD-PCG-Python").PCG
+BCHOL = importlib.import_module("BCHOL-python").BCHOL
+##delete later##
+solve_build = importlib.import_module("BCHOL-python").solve_build
+
 np.set_printoptions(precision=4, suppress=True, linewidth = 100)
 
 class SQPSolverMethods(enum.Enum):
@@ -14,6 +18,8 @@ class SQPSolverMethods(enum.Enum):
     PCG_J = "PCG-J"
     PCG_BJ = "PCG-BJ"
     PCG_SS = "PCG-SS"
+    #Should I ADD BCHOL HERE?
+    # BCHOL = "BCHOL"
 
 
 class MPCSolverMethods(enum.Enum):
@@ -24,6 +30,8 @@ class MPCSolverMethods(enum.Enum):
     QP_PCG_J = "QP-PCG-J"
     QP_PCG_BJ = "QP-PCG-BJ"
     QP_PCG_SS = "QP-PCG-SS"
+    #Should I ADD BCHOL HERE?
+    # BCHOL = "BCHOL"
 
 class TrajoptMPCReference:
     def __init__(self, plantObj:TrajoptPlant, costObj: TrajoptCost, constraintObj: TrajoptConstraint = None):
@@ -211,6 +219,9 @@ class TrajoptMPCReference:
         
         G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
 
+        # solve_build.buildBCHOL(G,g,C,c,N,nx,nu)
+        # breakpoint()
+
         total_dynamics_intial_state_constraints = nx*N
         total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
         total_constraints = total_dynamics_intial_state_constraints + total_other_constraints
@@ -230,6 +241,30 @@ class TrajoptMPCReference:
             dxul, _, _, _ = np.linalg.lstsq(KKT, kkt, rcond=None)
 
         return dxul
+    
+    ###############
+    ''''ADD HERE solveBCHOLSystem_Schur
+    The following method serves as a bridge and translator between MPC vars and BCHOL
+    nx = nstates
+    nu = ninputs'''
+    def solveBCHOL(self,x:np.ndarray, u:np.ndarray,xs:np.ndarray,N:int,dt:float, rho:float = 0.0) :
+        
+        nq = self.plant.get_num_pos()
+        nv = self.plant.get_num_vel()
+        nu = self.plant.get_num_cntrl()
+        nx = nq + nv
+        
+
+        G,g,C,c = self.formKKTSystemBlocks(x,u,xs,N,dt)
+       
+        dxul = solve_build.buildBCHOL(G,g,C,c,N,nx,nu)
+        
+        #q,r,d are the solution vector, need to return q and r
+        return dxul
+
+
+    
+    ################
 
     def solveKKTSystem_Schur(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, use_PCG = False, options = {}):
         nq = self.plant.get_num_pos()
@@ -239,6 +274,8 @@ class TrajoptMPCReference:
         
         G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
         
+        print("breakpoint")
+        breakpoint()
         total_dynamics_intial_state_constraints = nx*N
         total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
         total_constraints = total_dynamics_intial_state_constraints + total_other_constraints
@@ -381,11 +418,18 @@ class TrajoptMPCReference:
                 # Solve QP to get step direction
                 #
                 if LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.N: # standard backslash
+                    print("solveKKT\n")
                     dxul = self.solveKKTSystem(x, u, xs, N, dt, rho, options_linSys)
+                    print("dxul", dxul) #what are we getting here?
+
                 elif LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.S: # schur complement backslash
+                    print("Solve KKTSHUR")
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, False, options_linSys)
+                 
                 elif USING_PCG: # PCG
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, True, options_linSys)
+                    print(f"dxul: {dxul}\n")
+                
                 else:
                     print("Valid QP Solver options are:\n", \
                           "N      : Standard Backslash\n", \
@@ -412,6 +456,7 @@ class TrajoptMPCReference:
                     #
                     x_new = copy.deepcopy(x)
                     u_new = copy.deepcopy(u)
+
                     for k in range(N):
                         x_new[:,k] -= alpha*dxul[n*k : n*k+nx, 0]
                         if k < N-1:
@@ -422,6 +467,8 @@ class TrajoptMPCReference:
                     #
                     J_new = self.totalCost(x_new, u_new, N)
                     c_new = self.totalHardConstraintViolation(x_new, u_new, xs, N, dt)
+                    
+                ###
                     
                     #
                     # Directional derivative = grad_J*p - mu|c|

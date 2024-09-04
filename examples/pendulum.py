@@ -6,7 +6,8 @@ mpc_solver_methods = [MPCSolverMethods.DDP] #["iLQR", "QP-N", "QP-S", "QP-PCG-J"
 
 plant = PendulumPlant()
 
-N = 20
+#Yana's changes for the BCHOL must be a power of 2
+N = 8
 dt = 0.1
 
 Q = np.diag([3.0,4.0])
@@ -25,12 +26,12 @@ options = {
     "expected_reduction_min_SQP_DDP":-100, # needed for hard_constraints - TODO debug why
     "display": False
 }
-
-# runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, sqp_solver_methods, options)
+#Is there a difference what to run?
+runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, sqp_solver_methods, options)
 
 # options = {
 #     "expected_reduction_min_SQP_DDP":-100, # needed for hard_constraints - TODO debug why
 #     "display": False
 # }
 
-runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, mpc_solver_methods, options = options)
+# runMPCExample(plant, cost, hard_constraints, soft_constraints, N, dt, mpc_solver_methods, options = options)
