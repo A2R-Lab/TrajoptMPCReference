@@ -8,7 +8,7 @@ from TrajoptConstraint import TrajoptConstraint, BoxConstraint
 PCG = importlib.import_module("GBD-PCG-Python").PCG
 BCHOL = importlib.import_module("BCHOL-python").BCHOL
 ##delete later##
-solve_build = importlib.import_module("BCHOL-python").solve_build
+buildBCHOL = importlib.import_module("BCHOL-python").buildBCHOL
 
 np.set_printoptions(precision=4, suppress=True, linewidth = 100)
 
@@ -118,6 +118,7 @@ class TrajoptMPCReference:
         C[constraint_index:constraint_index + nx, state_control_index:state_control_index + nx] = np.eye(nx)
         c[constraint_index:constraint_index + nx, 0] = x[:,0] - xs
         constraint_index += nx
+
         for k in range(N-1):
             # first load in the cost hessian and gradient
             G[state_control_index:state_control_index + n, \
@@ -219,19 +220,44 @@ class TrajoptMPCReference:
         
         G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
 
-        # solve_build.buildBCHOL(G,g,C,c,N,nx,nu)
-        # breakpoint()
 
         total_dynamics_intial_state_constraints = nx*N
         total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
         total_constraints = total_dynamics_intial_state_constraints + total_other_constraints
         BR = np.zeros((total_constraints,total_constraints))
-
         if rho != 0:
             G += rho * np.eye(G.shape[0])
 
         KKT = np.hstack((np.vstack((G, C)),np.vstack((C.transpose(), BR))))
         kkt = np.vstack((g, c))
+
+
+
+        # print("C\n", C)
+        # print("G\n", G)
+        # print("c\n", c)
+        # print("g\n", g)
+        
+        # print("KKT\n")
+        # for row in KKT:
+        #     np.set_printoptions(linewidth=np.inf)  # Ensure the output is on a single line
+        #     print(row)
+        # print("hi")
+        # print("kkt\n", kkt)    
+
+
+        buildBCHOL(G,g,C,c,N,nx,nu,KKT,kkt)
+        breakpoint()
+
+        # ###YANA
+        # print("KKT~~\n")
+        # print(KKT)
+        # print("kkt\n")
+        # print(kkt)
+        # print("sol\n")
+        # print(np.linalg.solve(KKT, kkt))
+        # ###
+        # breakpoint()
 
         try:
             dxul = np.linalg.solve(KKT, kkt)
@@ -239,7 +265,7 @@ class TrajoptMPCReference:
             if options.get('DEBUG_MODE'):
                 print("Warning singular KKT system -- solving with least squares.")
             dxul, _, _, _ = np.linalg.lstsq(KKT, kkt, rcond=None)
-
+        print("soln\n ", dxul)
         return dxul
     
     ###############
