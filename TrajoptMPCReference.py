@@ -232,38 +232,26 @@ class TrajoptMPCReference:
 
         KKT = np.hstack((np.vstack((G, C)),np.vstack((C.transpose(), BR))))
         kkt = np.vstack((g, c))
-
-        print("C\n", C)
-        print("G\n", G)
-        print("c\n", c)
-        print("g\n", g)
         
-        print("KKT\n")
-        for row in KKT:
-            np.set_printoptions(linewidth=np.inf)  # Ensure the output is on a single line
-            print(row)
-        print("hi")
-        print("kkt\n", kkt)    
+        #To check against Yana's solve, need a separate solver instead
+        # g_yana=np.append(g,np.zeros((nu)))
+        # Q,R,q,r,A,B,d = buildBCHOL(G,g_yana,C,c,N,nx,nu)
+        # #maybe print Q,R,q,r,A,B,d
 
-        #add 0s for last timetep of nu
-        g_yana=np.append(g,np.zeros((nu)))
-        Q,R,q,r,A,B,d = buildBCHOL(G,g_yana,C,c,N,nx,nu)
-        #maybe print Q,R,q,r,A,B,d
+        # #solve with BCHOL
+        # b_dxul = BCHOL(N,nu,nx,Q,R,q,r,A,B,d)
+        # print(f"shapes: q {q.shape}, r {r.shape}")
+        # print("cholesky_soln:\n", b_dxul)
 
-        #solve with BCHOL
-        b_dxul = BCHOL(N,nu,nx,Q,R,q,r,A,B,d)
-        print("cholesky_soln:\n", b_dxul)
-        # BCHOL(Q,R,A,B...)
-
-        # ###YANA
+        # # ###YANA
         # print("KKT~~\n")
         # print(KKT)
         # print("kkt\n")
         # print(kkt)
         # print("sol\n")
         # print(np.linalg.solve(KKT, kkt))
-        # ###
-        breakpoint()
+        # # ###
+        # breakpoint()
 
         try:
             print("solving with linalg")
@@ -273,11 +261,6 @@ class TrajoptMPCReference:
             if options.get('DEBUG_MODE'):
                 print("Warning singular KKT system -- solving with least squares.")
             dxul, _, _, _ = np.linalg.lstsq(KKT, kkt, rcond=None)
-        print("soln\n ", dxul)
-        if not (np.isclose(dxul,b_dxul).all()):
-            print("solutions are different\n")
-        else:
-            print("solns are the same!")
         return dxul
     
     ###############
@@ -285,20 +268,21 @@ class TrajoptMPCReference:
     The following method serves as a bridge and translator between MPC vars and BCHOL
     nx = nstates
     nu = ninputs'''
-    # def solveBCHOL(self,x:np.ndarray, u:np.ndarray,xs:np.ndarray,N:int,dt:float, rho:float = 0.0) :
+    def solveBCHOL(self,x:np.ndarray, u:np.ndarray,xs:np.ndarray,N:int,dt:float, rho:float = 0.0) :
         
-        # nq = self.plant.get_num_pos()
-        # nv = self.plant.get_num_vel()
-        # nu = self.plant.get_num_cntrl()
-        # nx = nq + nv
+        nq = self.plant.get_num_pos()
+        nv = self.plant.get_num_vel()
+        nu = self.plant.get_num_cntrl()
+        nx = nq + nv
         
+        """Build explicitly A,B,c,Q,R,q,r here"""
 
         # G,g,C,c = self.formKKTSystemBlocks(x,u,xs,N,dt)
        
         # dxul = solve_build.buildBCHOL(G,g,C,c,N,nx,nu)
         
-        # #q,r,d are the solution vector, need to return q and r
-        # return dxul
+        #q,r,d are the solution vector, need to return q and r
+        return dxul
 
 
     
@@ -467,6 +451,12 @@ class TrajoptMPCReference:
                 elif USING_PCG: # PCG
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, True, options_linSys)
                     print(f"dxul: {dxul}\n")
+                    """Yana
+                    a
+                    
+                elif BCHOL_SOLVER_METHOD == SQPSikverNethids.B:
+                    print("Solve BCHOL\n)
+                    dxul = self.solveBchol(x,u,xs,N,dt,rho,options_linSys)"""
                 
                 else:
                     print("Valid QP Solver options are:\n", \
