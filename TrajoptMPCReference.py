@@ -19,7 +19,7 @@ class SQPSolverMethods(enum.Enum):
     PCG_BJ = "PCG-BJ"
     PCG_SS = "PCG-SS"
     #Should I ADD BCHOL HERE?
-    # BCHOL = "BCHOL"
+    B = "BCHOL"
 
 
 class MPCSolverMethods(enum.Enum):
@@ -219,9 +219,6 @@ class TrajoptMPCReference:
         n = nx + nu
         
         G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
-        #write them into file 
-
-        ###
 
         total_dynamics_intial_state_constraints = nx*N
         total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
@@ -233,25 +230,7 @@ class TrajoptMPCReference:
         KKT = np.hstack((np.vstack((G, C)),np.vstack((C.transpose(), BR))))
         kkt = np.vstack((g, c))
         
-        #To check against Yana's solve, need a separate solver instead
-        # g_yana=np.append(g,np.zeros((nu)))
-        # Q,R,q,r,A,B,d = buildBCHOL(G,g_yana,C,c,N,nx,nu)
-        # #maybe print Q,R,q,r,A,B,d
-
-        # #solve with BCHOL
-        # b_dxul = BCHOL(N,nu,nx,Q,R,q,r,A,B,d)
-        # print(f"shapes: q {q.shape}, r {r.shape}")
-        # print("cholesky_soln:\n", b_dxul)
-
-        # # ###YANA
-        # print("KKT~~\n")
-        # print(KKT)
-        # print("kkt\n")
-        # print(kkt)
-        # print("sol\n")
-        # print(np.linalg.solve(KKT, kkt))
-        # # ###
-        # breakpoint()
+     
 
         try:
             print("solving with linalg")
@@ -263,29 +242,87 @@ class TrajoptMPCReference:
             dxul, _, _, _ = np.linalg.lstsq(KKT, kkt, rcond=None)
         return dxul
     
-    ###############
-    ''''ADD HERE solveBCHOLSystem_Schur
+    
+    ''''
     The following method serves as a bridge and translator between MPC vars and BCHOL
     nx = nstates
     nu = ninputs'''
     def solveBCHOL(self,x:np.ndarray, u:np.ndarray,xs:np.ndarray,N:int,dt:float, rho:float = 0.0) :
-        
+        print("inside solveBCHOL\n")
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
         nx = nq + nv
         
-        """Build explicitly A,B,c,Q,R,q,r here"""
-
+        """The old approach had transform from G,C to A,B..
         # G,g,C,c = self.formKKTSystemBlocks(x,u,xs,N,dt)
-       
         # dxul = solve_build.buildBCHOL(G,g,C,c,N,nx,nu)
-        
-        #q,r,d are the solution vector, need to return q and r
+        """
+        Q,R,q,r,A,B,d = self.formLQRlists(x,u,xs,N,dt)
+        print("Got things from LQRbuild\n")
+        #pass it to solve BCHOL
+        dxul = BCHOL(N,nu,nx,Q,R,q,r,A,B,d)
         return dxul
 
 
-    
+
+    def formLQRlists(self, x: np.ndarray, u:np.ndarray, xs: np.ndarray, N:int, dt:float):
+        # G,g are cost hessian and gradient with n*(N-1) + nx state and control variables 
+        nq = self.plant.get_num_pos()
+        nv = self.plant.get_num_vel()
+        nu = self.plant.get_num_cntrl()
+        nx = nq + nv
+        n = nx + nu
+
+        total_states_controls = n*(N-1) + nx
+        G = np.zeros((total_states_controls, total_states_controls))
+        g = np.zeros((total_states_controls, 1))
+        Q = np.zeros((N,nx,nx))
+        R = np.zeros((N,nu,nu))
+        #double check the dimensions
+        q = np.zeros((N,nx))
+        r = np.zeros((N,nu))
+
+        #define the dynamics , transformed
+        A=np.zeros((N,nx,nx))
+        B =np.zeros((N,nu,nx))
+        d = np.zeros((N,nx))
+
+        state_control_index = 0
+        #init the first d as a start state
+        d[0] = xs
+
+        for k in range(N-1):
+            # first load in the cost hessian and gradient
+            G[state_control_index:state_control_index + n, \
+              state_control_index:state_control_index + n] = self.cost.hessian(x[:,k], u[:,k], k)
+            g[state_control_index:state_control_index + n, 0] = self.cost.gradient(x[:,k], u[:,k], k)
+            #do you need to add soft constraints??
+            Q[k]=G[state_control_index:state_control_index+nx, \
+                   state_control_index:state_control_index+nx]
+            R[k]=G[state_control_index+nx:state_control_index+nx+nu, \
+                   state_control_index+nx:state_control_index+nx+nu]
+            q[k] = g[state_control_index:state_control_index + nx, 0]
+            r[k] = g[state_control_index+nx:state_control_index + nx+nu, 0]
+
+
+            #Add A,B
+            Ak, Bk = self.plant.integrator(x[:,k], u[:,k], dt, return_gradient = True)
+            A[k] = Ak.T
+            B[k]=Bk.T
+            #add d
+            xkp1 = self.plant.integrator(x[:,k], u[:,k], dt)
+            d[k+1] = x[:,k+1] - xkp1
+            #Do we need to add other constraints? jacob/value?
+            state_control_index+=n
+        #Add the final cost
+        Q[N-1] =  self.cost.hessian(x[:,N-1], timestep = N-1)
+        q[N-1] = self.cost.gradient(x[:,N-1], timestep = N-1)
+        
+        #seems like a succefful built, need to check A.T/B.T transpose
+        print("Done building\n")        
+        return Q,R,q,r,A,B,d
+
     ################
 
     def solveKKTSystem_Schur(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, use_PCG = False, options = {}):
@@ -439,24 +476,32 @@ class TrajoptMPCReference:
                 #
                 # Solve QP to get step direction
                 #
+
+                """YANA's test """
+                
+
+
+
                 if LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.N: # standard backslash
                     print("solveKKT\n")
                     dxul = self.solveKKTSystem(x, u, xs, N, dt, rho, options_linSys)
-                    # print("dxul", dxul) #soln
+                    print("dxul", dxul) #soln
 
                 elif LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.S: # schur complement backslash
                     print("Solve KKTSHUR")
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, False, options_linSys)
+                
+                elif LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.B:
+                    print("Solve BCHOL\n")
+                    dxul = -self.solveBCHOL(x,u,xs,N,dt,rho)
+                    print("bdxul ", dxul)
                  
                 elif USING_PCG: # PCG
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, True, options_linSys)
                     print(f"dxul: {dxul}\n")
-                    """Yana
-                    a
+
                     
-                elif BCHOL_SOLVER_METHOD == SQPSikverNethids.B:
-                    print("Solve BCHOL\n)
-                    dxul = self.solveBchol(x,u,xs,N,dt,rho,options_linSys)"""
+                
                 
                 else:
                     print("Valid QP Solver options are:\n", \
@@ -484,6 +529,7 @@ class TrajoptMPCReference:
                     #
                     x_new = copy.deepcopy(x)
                     u_new = copy.deepcopy(u)
+
 
                     for k in range(N):
                         x_new[:,k] -= alpha*dxul[n*k : n*k+nx, 0]
