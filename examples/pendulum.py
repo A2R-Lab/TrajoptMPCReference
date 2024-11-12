@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 from exampleHelpers import *
 
-sqp_solver_methods = [SQPSolverMethods.B]#["N", "S", "PCG-J", "PCG-BJ", "PCG-SS"]
+sqp_solver_methods = [SQPSolverMethods.B]#["N", "S","B" "PCG-J", "PCG-BJ", "PCG-SS"]
 mpc_solver_methods = [MPCSolverMethods.DDP] #["iLQR", "QP-N", "QP-S", "QP-PCG-J", "QP-PCG-BJ", "QP-PCG-SS"]
 
 plant = PendulumPlant()
