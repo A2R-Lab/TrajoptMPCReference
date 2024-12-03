@@ -9,6 +9,10 @@ PCG = importlib.import_module("GBD-PCG-Python").PCG
 BCHOL = importlib.import_module("BCHOL-python").BCHOL
 ##delete later##
 buildBCHOL = importlib.import_module("BCHOL-python").buildBCHOL
+read_csv=importlib.import_module("BCHOL-python").read_csv
+write_csv=importlib.import_module("BCHOL-python").write_csv
+
+
 
 np.set_printoptions(precision=4, suppress=True, linewidth = 100)
 
@@ -259,8 +263,30 @@ class TrajoptMPCReference:
         # dxul = solve_build.buildBCHOL(G,g,C,c,N,nx,nu)
         """
         Q,R,q,r,A,B,d = self.formLQRlists(x,u,xs,N,dt)
+        if(False):
+            for i in range(N):
+                print("i: ",i)
+                print(f"A matrix \n {A[i]}")
+                print(f"B matrix: \n{B[i]}")
+                print(f"Q matrix \n:{Q[i]}")
+                print(f"R matrix: \n{R[i]}")
+                print(f"q  {q[i]}")
+                print(f"r {r[i]}")
+                print(f"d {d[i]}")
         print("Got things from LQRbuild\n")
         #pass it to solve BCHOL
+        # breakpoint()
+        print("Writing CSV file")   
+        write_csv("pendulum8.csv",N,nx,nu,Q,R,q,r,A,B,d)
+        print("Read csv")
+        nN,nnx,nnu,nQ,nR,nq,nr,nA,nB,nd=read_csv("pendulum8.csv")
+        #check csv are the same
+        assert np.all(Q==nQ) and np.all(R==nR)
+        assert np.all(A==nA) and np.all(B==nB)
+        assert np.all(q==nq) and np.all(r==nr) and np.all(d==nd)
+
+
+
         dxul = BCHOL(N,nu,nx,Q,R,q,r,A,B,d)
         return dxul
 
@@ -475,13 +501,7 @@ class TrajoptMPCReference:
 
                 #
                 # Solve QP to get step direction
-                #
-
-                """YANA's test """
-                
-
-
-
+                #            
                 if LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.N: # standard backslash
                     print("solveKKT\n")
                     dxul = self.solveKKTSystem(x, u, xs, N, dt, rho, options_linSys)
