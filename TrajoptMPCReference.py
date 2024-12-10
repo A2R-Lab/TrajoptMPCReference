@@ -263,7 +263,7 @@ class TrajoptMPCReference:
         # dxul = solve_build.buildBCHOL(G,g,C,c,N,nx,nu)
         """
         Q,R,q,r,A,B,d = self.formLQRlists(x,u,xs,N,dt)
-        if(False):
+        if(True):
             for i in range(N):
                 print("i: ",i)
                 print(f"A matrix \n {A[i]}")
