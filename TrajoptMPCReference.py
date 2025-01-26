@@ -233,13 +233,16 @@ class TrajoptMPCReference:
 
         KKT = np.hstack((np.vstack((G, C)),np.vstack((C.transpose(), BR))))
         kkt = np.vstack((g, c))
+
+        #YANA DEBUG
+        # Compute the condition number
+        cond_number = np.linalg.cond(KKT)
+        print("cond number ",cond_number)
         
      
 
         try:
-            print("solving with linalg")
             dxul = np.linalg.solve(KKT, kkt)
-            print("solved\n")
         except:
             if options.get('DEBUG_MODE'):
                 print("Warning singular KKT system -- solving with least squares.")
@@ -252,41 +255,18 @@ class TrajoptMPCReference:
     nx = nstates
     nu = ninputs'''
     def solveBCHOL(self,x:np.ndarray, u:np.ndarray,xs:np.ndarray,N:int,dt:float, rho:float = 0.0) :
-        print("inside solveBCHOL\n")
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
         nx = nq + nv
-        
-        """The old approach had transform from G,C to A,B..
-        # G,g,C,c = self.formKKTSystemBlocks(x,u,xs,N,dt)
-        # dxul = solve_build.buildBCHOL(G,g,C,c,N,nx,nu)
-        """
         Q,R,q,r,A,B,d = self.formLQRlists(x,u,xs,N,dt)
-        if(True):
-            for i in range(N):
-                print("i: ",i)
-                print(f"A matrix \n {A[i]}")
-                print(f"B matrix: \n{B[i]}")
-                print(f"Q matrix \n:{Q[i]}")
-                print(f"R matrix: \n{R[i]}")
-                print(f"q  {q[i]}")
-                print(f"r {r[i]}")
-                print(f"d {d[i]}")
-        print("Got things from LQRbuild\n")
-        #pass it to solve BCHOL
-        # breakpoint()
-        print("Writing CSV file")   
-        write_csv("pendulum8.csv",N,nx,nu,Q,R,q,r,A,B,d)
-        print("Read csv")
-        nN,nnx,nnu,nQ,nR,nq,nr,nA,nB,nd=read_csv("pendulum8.csv")
-        #check csv are the same
-        assert np.all(Q==nQ) and np.all(R==nR)
-        assert np.all(A==nA) and np.all(B==nB)
-        assert np.all(q==nq) and np.all(r==nr) and np.all(d==nd)
-
-
-
+        #add regularization
+        if rho != 0:
+            print("rho ", rho)
+            identity_matrix = rho * np.eye(Q.shape[1])  # Shape (2, 2)
+            Q += identity_matrix  # Broadcasting adds the identity matrix to each timestep
+            identity_matrix= rho *np.eye(R.shape[1])
+            R += identity_matrix
         dxul = BCHOL(N,nu,nx,Q,R,q,r,A,B,d)
         return dxul
 
@@ -305,7 +285,6 @@ class TrajoptMPCReference:
         g = np.zeros((total_states_controls, 1))
         Q = np.zeros((N,nx,nx))
         R = np.zeros((N,nu,nu))
-        #double check the dimensions
         q = np.zeros((N,nx))
         r = np.zeros((N,nu))
 
@@ -323,7 +302,6 @@ class TrajoptMPCReference:
             G[state_control_index:state_control_index + n, \
               state_control_index:state_control_index + n] = self.cost.hessian(x[:,k], u[:,k], k)
             g[state_control_index:state_control_index + n, 0] = self.cost.gradient(x[:,k], u[:,k], k)
-            #do you need to add soft constraints??
             Q[k]=G[state_control_index:state_control_index+nx, \
                    state_control_index:state_control_index+nx]
             R[k]=G[state_control_index+nx:state_control_index+nx+nu, \
@@ -339,17 +317,12 @@ class TrajoptMPCReference:
             #add d
             xkp1 = self.plant.integrator(x[:,k], u[:,k], dt)
             d[k+1] = x[:,k+1] - xkp1
-            #Do we need to add other constraints? jacob/value?
             state_control_index+=n
         #Add the final cost
         Q[N-1] =  self.cost.hessian(x[:,N-1], timestep = N-1)
         q[N-1] = self.cost.gradient(x[:,N-1], timestep = N-1)
-        
-        #seems like a succefful built, need to check A.T/B.T transpose
-        print("Done building\n")        
+       
         return Q,R,q,r,A,B,d
-
-    ################
 
     def solveKKTSystem_Schur(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, use_PCG = False, options = {}):
         nq = self.plant.get_num_pos()
@@ -359,8 +332,7 @@ class TrajoptMPCReference:
         
         G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
         
-        print("breakpoint")
-        breakpoint()
+
         total_dynamics_intial_state_constraints = nx*N
         total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
         total_constraints = total_dynamics_intial_state_constraints + total_other_constraints
@@ -503,22 +475,23 @@ class TrajoptMPCReference:
                 # Solve QP to get step direction
                 #            
                 if LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.N: # standard backslash
-                    print("solveKKT\n")
+                    print("new loop of N")
                     dxul = self.solveKKTSystem(x, u, xs, N, dt, rho, options_linSys)
-                    print("dxul", dxul) #soln
+                    print(dxul)
+
 
                 elif LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.S: # schur complement backslash
-                    print("Solve KKTSHUR")
+                    print("new loop of S")
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, False, options_linSys)
-                
+                    print(dxul)
+
                 elif LINEAR_SYSTEM_SOLVER_METHOD == SQPSolverMethods.B:
-                    print("Solve BCHOL\n")
+                    print("new loop of B")
                     dxul = -self.solveBCHOL(x,u,xs,N,dt,rho)
-                    print("bdxul ", dxul)
+                    print(dxul)
                  
                 elif USING_PCG: # PCG
                     dxul = self.solveKKTSystem_Schur(x, u, xs, N, dt, rho, True, options_linSys)
-                    print(f"dxul: {dxul}\n")
 
                     
                 
