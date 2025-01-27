@@ -2,6 +2,7 @@ import importlib
 import numpy as np
 import copy
 import enum
+YANA = True
 from TrajoptPlant import TrajoptPlant, DoubleIntegratorPlant, PendulumPlant, CartPolePlant, URDFPlant
 from TrajoptCost import TrajoptCost, QuadraticCost
 from TrajoptConstraint import TrajoptConstraint, BoxConstraint
@@ -34,8 +35,6 @@ class MPCSolverMethods(enum.Enum):
     QP_PCG_J = "QP-PCG-J"
     QP_PCG_BJ = "QP-PCG-BJ"
     QP_PCG_SS = "QP-PCG-SS"
-    #Should I ADD BCHOL HERE?
-    # BCHOL = "BCHOL"
 
 class TrajoptMPCReference:
     def __init__(self, plantObj:TrajoptPlant, costObj: TrajoptCost, constraintObj: TrajoptConstraint = None):
@@ -216,6 +215,8 @@ class TrajoptMPCReference:
         return J
 
     def solveKKTSystem(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, options = {}):
+        print("Checking before new loop\n")
+        print(f"x {x}, u {u}, xs {xs}, dt {dt}")
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -230,9 +231,12 @@ class TrajoptMPCReference:
         BR = np.zeros((total_constraints,total_constraints))
         if rho != 0:
             G += rho * np.eye(G.shape[0])
-
-        KKT = np.hstack((np.vstack((G, C)),np.vstack((C.transpose(), BR))))
-        kkt = np.vstack((g, c))
+        if YANA:
+            #the conditions are the same
+            print(f"g {g}\n, c{c}\n")
+            print(f"G {G}\n, C {C}\n")
+            KKT = np.hstack((np.vstack((G, C)),np.vstack((C.transpose(), BR))))
+            kkt = np.vstack((g, c))
 
         #YANA DEBUG
         # Compute the condition number
@@ -255,6 +259,9 @@ class TrajoptMPCReference:
     nx = nstates
     nu = ninputs'''
     def solveBCHOL(self,x:np.ndarray, u:np.ndarray,xs:np.ndarray,N:int,dt:float, rho:float = 0.0) :
+        
+        print("Checking before new loop\n")
+        print(f"x {x}, u {u}, xs {xs}, dt {dt}")
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -263,10 +270,11 @@ class TrajoptMPCReference:
         #add regularization
         if rho != 0:
             print("rho ", rho)
-            identity_matrix = rho * np.eye(Q.shape[1])  # Shape (2, 2)
-            Q += identity_matrix  # Broadcasting adds the identity matrix to each timestep
+            identity_matrix = rho * np.eye(Q.shape[1])  
+            Q += identity_matrix 
             identity_matrix= rho *np.eye(R.shape[1])
             R += identity_matrix
+
         dxul = BCHOL(N,nu,nx,Q,R,q,r,A,B,d)
         return dxul
 
@@ -447,6 +455,7 @@ class TrajoptMPCReference:
         # Start the main loops (soft constraint outer loop)
         soft_constraint_iteration = 0
         while 1:
+            print("init\n")
             # Initialize the QP solve
             J = 0
             c = 0
@@ -520,8 +529,10 @@ class TrajoptMPCReference:
                     #
                     # Apply the update
                     #
+                    print("iteration ", iteration)
                     x_new = copy.deepcopy(x)
                     u_new = copy.deepcopy(u)
+                    print("Doing line search?")
 
 
                     for k in range(N):
@@ -566,11 +577,14 @@ class TrajoptMPCReference:
                     #
                     if (delta_merit >= 0 and reduction_ratio >= options['expected_reduction_min_SQP_DDP'] and \
                                              reduction_ratio <= options['expected_reduction_max_SQP_DDP']):
+                        print("Accepted? iteration ",iteration)
                         x = x_new
                         u = u_new
                         J = J_new
                         c = c_new
                         merit = merit_new
+
+                        print(f"Check updates x {x}, u {u}\n,J {J}\n c {c}\n")
                         if options['DEBUG_MODE_SQP_DDP']:
                             print("Iter[", iteration, "] Cost[", J_new, "], Constraint Violation[", c_new, "], mu [", mu, "], Merit Function[", merit_new, "] and Reduction Ratio[", reduction_ratio, "] and rho [", rho, "]")
 
@@ -588,6 +602,7 @@ class TrajoptMPCReference:
                             trace.append([J,c,int(-np.log(alpha)/np.log(2))+1,inner_iters])
                         # end line search
                         break
+                    
                     
                     #
                     # If failed iterate decrease alpha and try line search again
@@ -607,6 +622,7 @@ class TrajoptMPCReference:
                         if options['RETURN_TRACE_SQP']:
                             trace.append([J,c,-1,inner_iters])
                         break
+                print("done with search")
                 #
                 # Check for exit (or error) and adjust accordingly
                 #
@@ -622,7 +638,7 @@ class TrajoptMPCReference:
                 break
 
         if options['RETURN_TRACE_SQP']:
-            return x, u, trace   
+            return x, u, trace 
         
         return x, u
 
@@ -819,6 +835,7 @@ class TrajoptMPCReference:
                 J += self.cost.value(x[:,k], u[:,k], k)
             J += self.cost.value(x[:,N-1], timestep = N-1)
             # get initial gradients and apply soft constraints (if applicable)
+            print("next iter setup")
             J = self.next_iteration_setup(x, u, dt, N, A, B, H, g, J, fxx, fux)
             delta_J = J
 
