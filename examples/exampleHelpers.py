@@ -42,40 +42,71 @@ def display(x: np.ndarray, x_lim: list[float] = [-20, 20], y_lim: list[float] = 
 	plt.show()
 
 
-def runSolversSQP(trajoptMPCReference: TrajoptMPCReference, N: int, dt: float, solver_methods: list[SQPSolverMethods], options = {}):
+def runSolversSQP(
+		trajoptMPCReference: TrajoptMPCReference,
+		N: int, dt: float,
+		solver_methods: list[SQPSolverMethods],
+		options = {},
+		x0=None,
+		u0=None
+):
+	"""
+    Run SQP for each solver in solver_methods.
+    If x0, u0 are provided, use them as initial guesses; otherwise default to zero.
+    Returns a dictionary of final results for each solver.
+    """
+	results = {}  # will store { solver_method_name: (x_final, u_final, cost, state_err) }
+
+	# Dimensions
+	nq = trajoptMPCReference.plant.get_num_pos()
+	nv = trajoptMPCReference.plant.get_num_vel()
+	nx = nq + nv
+	nu = trajoptMPCReference.plant.get_num_cntrl()
+
 	for solver in solver_methods:
 		print("-----------------------------")
-		print("Solving with method: ", solver)
+		print("Solving with method:", solver)
 
-		nq = trajoptMPCReference.plant.get_num_pos()
-		nv = trajoptMPCReference.plant.get_num_vel()
-		nx = nq + nv
-		nu = trajoptMPCReference.plant.get_num_cntrl()
-		x = np.zeros((nx,N))
-		#check for Yana
-		# x+=0.01
-		u = np.zeros((nu,N-1))
-		# u+=0.01
-		xs = copy.deepcopy(x[:,0])
+		if x0 is not None:
+			x_init = x0.copy()
+		else:
+			x_init = np.zeros((nx, N))
 
-		x, u = trajoptMPCReference.SQP(x, u, N, dt, LINEAR_SYSTEM_SOLVER_METHOD = solver, options = options)
+		if u0 is not None:
+			u_init = u0.copy()
+		else:
+			u_init = np.zeros((nu, N-1))
 
-		if options["display"]:
-			display(x, title="SQP Solver Method: " + solver.name)
+		# 2) Run SQP
+		x_sol, u_sol = trajoptMPCReference.SQP(x_init, u_init, N, dt,
+											   LINEAR_SYSTEM_SOLVER_METHOD=solver,
+											   options=options)
 
-		print("Final State Trajectory")
-		print(x)
-		print("Final Control Trajectory")
-		print(u)
+		# 3) Possibly display
+		if options.get("display", False):
+			display(x_sol, title="SQP Solver Method: " + solver.name)
+
+		# 4) Compute final cost and final error
 		J = 0
 		for k in range(N-1):
-			J += trajoptMPCReference.cost.value(x[:,k], u[:,k])
-		J += trajoptMPCReference.cost.value(x[:,N-1], None)
-		print("Cost [", J, "]")
-		print("Final State Error vs. Goal")
-		print(x[:,-1] - trajoptMPCReference.cost.xg)
+			J += trajoptMPCReference.cost.value(x_sol[:,k], u_sol[:,k], k)
+		J += trajoptMPCReference.cost.value(x_sol[:,N-1], timestep=N-1)
 
-def runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, solver_methods, options = {}):
+		xg = trajoptMPCReference.cost.xg
+		final_err = x_sol[:,-1] - xg
+
+		# 5) Store in results dictionary
+		results[solver.name] = (x_sol, u_sol, J, final_err)
+
+	return results
+
+def runSQPExample(plant, cost, hard_constraints, soft_constraints,
+				  N, dt, solver_methods, options={},
+				  x0=None, u0=None):
+	"""
+    Run an SQP example with the specified solver methods.
+    Optionally start from custom initial (x, u).
+    """
 	print("-----------------------------")
 	print("-----------------------------")
 	print("    Running SQP Example      ")
@@ -83,25 +114,62 @@ def runSQPExample(plant, cost, hard_constraints, soft_constraints, N, dt, solver
 	print("-----------------------------")
 	print("Solving Unconstrained Problem")
 	print("-----------------------------")
-	trajoptMPCReference = TrajoptMPCReference(plant, cost)
-	runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options)
 
+	# Build the Trajopt reference object
+	trajoptMPCReference = TrajoptMPCReference(plant, cost)
+
+	# We call our updated runSolversSQP below with custom x0, u0
+	results_unconstrained = runSolversSQP(
+		trajoptMPCReference,
+		N, dt,
+		solver_methods,
+		options=options,
+		x0=x0,
+		u0=u0
+	)
+
+	# Print or do something with these results
+	print("\n[Unconstrained Results]")
+	for solver_method, res_data in results_unconstrained.items():
+		x_final, u_final, final_cost, final_state_err = res_data
+		print(f"Solver: {solver_method}")
+		print("Final State Trajectory:\n", x_final)
+		print("Final Control Trajectory:\n", u_final)
+		print(f"Cost: {final_cost:.4f}")
+		print("Final State Error vs. Goal:", final_state_err)
+		print("========================================\n")
+
+	# If we also want to run a "hard constraints" example:
 	if (hard_constraints is not None):
-		print("---------------------------------")
 		print("---------------------------------")
 		print(" Solving Constrained Problem Hard")
 		print("---------------------------------")
 		trajoptMPCReference = TrajoptMPCReference(plant, cost, hard_constraints)
-		runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options)
+		results_hard = runSolversSQP(
+			trajoptMPCReference,
+			N, dt,
+			solver_methods,
+			options=options,
+			x0=x0,
+			u0=u0
+		)
+		# Print or store results likewise
+		# ...
 
+	# If we also want to run a "soft constraints" example:
 	if (soft_constraints is not None):
-		print("---------------------------------")
 		print("---------------------------------")
 		print(" Solving Constrained Problem Soft")
 		print("---------------------------------")
 		trajoptMPCReference = TrajoptMPCReference(plant, cost, soft_constraints)
-		runSolversSQP(trajoptMPCReference, N, dt, solver_methods, options)
-
+		results_soft = runSolversSQP(
+			trajoptMPCReference,
+			N, dt,
+			solver_methods,
+			options=options,
+			x0=x0,
+			u0=u0
+		)
 def runSolversMPC(trajoptMPCReference, N, dt, solver_methods, x0 = None, u0 = None, options = {}):
 	for solver in solver_methods:
 		print("-----------------------------")

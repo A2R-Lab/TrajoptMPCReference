@@ -215,8 +215,8 @@ class TrajoptMPCReference:
         return J
 
     def solveKKTSystem(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, options = {}):
-        print("Checking x and u before the iteration inside solveKKTSystem\n")
-        print(f"x {x}\n u {u}\n xs {xs}\n dt {dt}")
+        #print("Checking x and u before the iteration inside solveKKTSystem\n")
+        #print(f"x {x}\n u {u}\n xs {xs}\n dt {dt}")
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -224,7 +224,7 @@ class TrajoptMPCReference:
         n = nx + nu
         
         G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
-        print(G)
+        #print(G)
 
         total_dynamics_intial_state_constraints = nx*N
         total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
@@ -242,7 +242,7 @@ class TrajoptMPCReference:
         #YANA DEBUG
         # Compute the condition number
         cond_number = np.linalg.cond(KKT)
-        print("cond number ",cond_number)
+        #print("cond number ",cond_number)
         
      
 
