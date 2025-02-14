@@ -215,8 +215,8 @@ class TrajoptMPCReference:
         return J
 
     def solveKKTSystem(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, options = {}):
-        print("Checking before new loop\n")
-        print(f"x {x}, u {u}, xs {xs}, dt {dt}")
+        print("Checking x and u before the iteration inside solveKKTSystem\n")
+        print(f"x {x}\n u {u}\n xs {xs}\n dt {dt}")
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -224,6 +224,7 @@ class TrajoptMPCReference:
         n = nx + nu
         
         G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
+        print(G)
 
         total_dynamics_intial_state_constraints = nx*N
         total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
@@ -231,12 +232,12 @@ class TrajoptMPCReference:
         BR = np.zeros((total_constraints,total_constraints))
         if rho != 0:
             G += rho * np.eye(G.shape[0])
-        if YANA:
-            #the conditions are the same
-            print(f"g {g}\n, c{c}\n")
-            print(f"G {G}\n, C {C}\n")
-            KKT = np.hstack((np.vstack((G, C)),np.vstack((C.transpose(), BR))))
-            kkt = np.vstack((g, c))
+        # if YANA:
+        #     #the conditions are the same
+        #     print(f"g {g}\n, c{c}\n")
+        #     print(f"G {G}\n, C {C}\n")
+        KKT = np.hstack((np.vstack((G, C)),np.vstack((C.transpose(), BR))))
+        kkt = np.vstack((g, c))
 
         #YANA DEBUG
         # Compute the condition number
@@ -260,8 +261,8 @@ class TrajoptMPCReference:
     nu = ninputs'''
     def solveBCHOL(self,x:np.ndarray, u:np.ndarray,xs:np.ndarray,N:int,dt:float, rho:float = 0.0) :
         
-        print("Checking before new loop\n")
-        print(f"x {x}, u {u}, xs {xs}, dt {dt}")
+        print("Checking x and u before the iteration inside BCHOL\n")
+        print(f"x {x}\n u {u}\n xs {xs}\n dt {dt}")
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
         nu = self.plant.get_num_cntrl()
@@ -274,7 +275,9 @@ class TrajoptMPCReference:
             Q += identity_matrix 
             identity_matrix= rho *np.eye(R.shape[1])
             R += identity_matrix
-
+        print(f"N {N}, nx {nx},nu {nu}")
+        print(Q)
+        write_csv("pendulum_x0.csv",N,nx,nu,Q,R,q,r,A,B,d)
         dxul = BCHOL(N,nu,nx,Q,R,q,r,A,B,d)
         return dxul
 
@@ -455,7 +458,6 @@ class TrajoptMPCReference:
         # Start the main loops (soft constraint outer loop)
         soft_constraint_iteration = 0
         while 1:
-            print("init\n")
             # Initialize the QP solve
             J = 0
             c = 0
@@ -479,6 +481,8 @@ class TrajoptMPCReference:
             # Start the main loop (SQP main loop)
             iteration = 0
             while 1:
+                print("Checking initial x and u \n")
+                print(f"x {x}\n u {u}\n xs {xs}\n dt {dt}")
 
                 #
                 # Solve QP to get step direction
@@ -529,10 +533,10 @@ class TrajoptMPCReference:
                     #
                     # Apply the update
                     #
-                    print("iteration ", iteration)
+                    print(f"iteration {iteration} complete ")
                     x_new = copy.deepcopy(x)
                     u_new = copy.deepcopy(u)
-                    print("Doing line search?")
+                    print("Proceeding to do the line search")
 
 
                     for k in range(N):
@@ -577,14 +581,14 @@ class TrajoptMPCReference:
                     #
                     if (delta_merit >= 0 and reduction_ratio >= options['expected_reduction_min_SQP_DDP'] and \
                                              reduction_ratio <= options['expected_reduction_max_SQP_DDP']):
-                        print("Accepted? iteration ",iteration)
+                        print("Accepted the delta merit on iteration ",iteration)
                         x = x_new
                         u = u_new
                         J = J_new
                         c = c_new
                         merit = merit_new
 
-                        print(f"Check updates x {x}, u {u}\n,J {J}\n c {c}\n")
+                        print(f"Check updates x {x}\n u {u}\nJ {J}\n c {c}\n")
                         if options['DEBUG_MODE_SQP_DDP']:
                             print("Iter[", iteration, "] Cost[", J_new, "], Constraint Violation[", c_new, "], mu [", mu, "], Merit Function[", merit_new, "] and Reduction Ratio[", reduction_ratio, "] and rho [", rho, "]")
 

@@ -52,7 +52,10 @@ def runSolversSQP(trajoptMPCReference: TrajoptMPCReference, N: int, dt: float, s
 		nx = nq + nv
 		nu = trajoptMPCReference.plant.get_num_cntrl()
 		x = np.zeros((nx,N))
+		#check for Yana
+		# x+=0.01
 		u = np.zeros((nu,N-1))
+		# u+=0.01
 		xs = copy.deepcopy(x[:,0])
 
 		x, u = trajoptMPCReference.SQP(x, u, N, dt, LINEAR_SYSTEM_SOLVER_METHOD = solver, options = options)

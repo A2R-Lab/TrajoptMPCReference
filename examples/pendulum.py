@@ -12,7 +12,7 @@ dt = 0.1
 
 Q = np.diag([3.0,4.0])
 QF = np.diag([100.0,100.0])
-R = np.diag([0.1])
+R = np.diag([0.5])
 xg = np.array([3.14159,0])
 cost = QuadraticCost(Q,QF,R,xg)
 
