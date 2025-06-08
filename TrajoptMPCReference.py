@@ -14,6 +14,8 @@ class SQPSolverMethods(enum.Enum):
     PCG_J = "PCG-J"
     PCG_BJ = "PCG-BJ"
     PCG_SS = "PCG-SS"
+    PCG_J_v2 = "PCG2J"
+    PCG_SS_v2 = "PCG2SS"
 
 
 class MPCSolverMethods(enum.Enum):
@@ -57,6 +59,8 @@ class TrajoptMPCReference:
         options.setdefault('max_iter_linSys', 100)
         options.setdefault('DEBUG_MODE_linSys', False)
         options.setdefault('RETURN_TRACE_linSys', False)
+        # Schur Options
+        options.setdefault('Schur_v2', False)
         # DDP/SQP options
         options.setdefault('exit_tolerance_SQP_DDP', 1e-6)
         options.setdefault('max_iter_SQP_DDP', 25)
@@ -67,6 +71,7 @@ class TrajoptMPCReference:
         options.setdefault('rho_min_SQP_DDP', 1e-3)
         options.setdefault('rho_max_SQP_DDP', 1e3)
         options.setdefault('rho_init_SQP_DDP', 0.001)
+        options.setdefault('rho2_factor', 0.01)
         options.setdefault('expected_reduction_min_SQP_DDP', 0.05)
         options.setdefault('expected_reduction_max_SQP_DDP', 3)
         # DDP/iLQR lag
@@ -231,26 +236,9 @@ class TrajoptMPCReference:
 
         return dxul
 
-    def solveKKTSystem_Schur(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, use_PCG = False, options = {}):
-        nq = self.plant.get_num_pos()
-        nv = self.plant.get_num_vel()
-        nu = self.plant.get_num_cntrl()
-        nx = nq + nv
-        
-        G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
-        
-        total_dynamics_intial_state_constraints = nx*N
-        total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
-        total_constraints = total_dynamics_intial_state_constraints + total_other_constraints
-        BR = np.zeros((total_constraints,total_constraints))
-
-        if rho != 0:
-            G += rho * np.eye(G.shape[0])
-
-        invG = np.linalg.inv(G)
-        S = BR - np.matmul(C, np.matmul(invG, C.transpose()))
-        gamma = c - np.matmul(C, np.matmul(invG, g))
-
+    def solveSchur(self, S: np.ndarray, gamma: np.ndarray, N: int, nx: int, use_PCG = False, options = {}):
+        l = None
+        traces = None
         if not use_PCG:
             try:
                 l = np.linalg.solve(S, gamma)
@@ -266,11 +254,44 @@ class TrajoptMPCReference:
                 l, traces = pcg.solve()
             else:
                 l = pcg.solve()
+        return l, traces
 
-        gCl = g - np.matmul(C.transpose(), l)
-        dxu = np.matmul(invG, gCl)
+    def solveKKTSystem_Schur(self, x: np.ndarray, u: np.ndarray, xs: np.ndarray, N: int, dt: float, rho: float = 0.0, use_PCG = False, options = {}):
+        nq = self.plant.get_num_pos()
+        nv = self.plant.get_num_vel()
+        nu = self.plant.get_num_cntrl()
+        nx = nq + nv
+        
+        G, g, C, c = self.formKKTSystemBlocks(x, u, xs, N, dt)
+        
+        total_dynamics_intial_state_constraints = nx*N
+        total_other_constraints = self.other_constraints.total_hard_constraints(x, u)
+        total_constraints = total_dynamics_intial_state_constraints + total_other_constraints
+        BR = np.zeros((total_constraints,total_constraints))
 
-        dxul = np.vstack((dxu,l))
+        rho2 = rho * options.get('rho2_factor')
+        if rho != 0:
+            G += rho * np.eye(G.shape[0])
+            BR -= rho2 * np.eye(BR.shape[0])
+
+        dxul = None
+        traces = None
+        if options.get('Schur_v2'):
+            BRinv = np.linalg.inv(BR)
+            S = G + np.matmul(C.transpose(),np.matmul(BRinv,C))
+            gamma = g - np.matmul(C.transpose(), np.matmul(BRinv, c))
+            dxu, traces = self.solveSchur(S, gamma, N, nx, use_PCG, options)
+            dmCdxu = c - np.matmul(C,dxu)
+            l = np.matmul(BRinv, dmCdxu)
+            dxul = np.vstack((dxu,l))
+        else:
+            invG = np.linalg.inv(G)
+            S = BR - np.matmul(C, np.matmul(invG, C.transpose()))
+            gamma = c - np.matmul(C, np.matmul(invG, g))
+            l, traces = self.solveSchur(S, gamma, N, nx, use_PCG, options)
+            gCl = g - np.matmul(C.transpose(), l)
+            dxu = np.matmul(invG, gCl)
+            dxul = np.vstack((dxu,l))
 
         if options.get('RETURN_TRACE'):
             return dxul, traces
@@ -334,13 +355,17 @@ class TrajoptMPCReference:
     def SQP(self, x: np.ndarray, u: np.ndarray, N: int, dt: float, LINEAR_SYSTEM_SOLVER_METHOD: SQPSolverMethods = SQPSolverMethods.N, options = {}):
         self.set_default_options(options)
         options_linSys = {'DEBUG_MODE': options['DEBUG_MODE_linSys']}
+        options_linSys['rho2_factor'] = options['rho2_factor']
 
-        USING_PCG = LINEAR_SYSTEM_SOLVER_METHOD in [SQPSolverMethods.PCG_J, SQPSolverMethods.PCG_BJ, SQPSolverMethods.PCG_SS]
+        USING_PCG = LINEAR_SYSTEM_SOLVER_METHOD in [SQPSolverMethods.PCG_J, SQPSolverMethods.PCG_BJ, SQPSolverMethods.PCG_SS,
+                                                    SQPSolverMethods.PCG_J_v2, SQPSolverMethods.PCG_SS_v2]
         if USING_PCG:
             options_linSys['exit_tolerance'] = options['exit_tolerance_linSys']
             options_linSys['max_iter'] = options['max_iter_linSys']
             options_linSys['RETURN_TRACE'] = options['RETURN_TRACE_linSys']
             options_linSys['preconditioner_type'] = LINEAR_SYSTEM_SOLVER_METHOD.value[4:]
+            if LINEAR_SYSTEM_SOLVER_METHOD in [SQPSolverMethods.PCG_J_v2, SQPSolverMethods.PCG_SS_v2]:
+                options_linSys['Schur_v2'] = True
 
         nq = self.plant.get_num_pos()
         nv = self.plant.get_num_vel()
