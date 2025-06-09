@@ -15,8 +15,8 @@ R = np.diag([0.1])
 xg = np.array([3.14159,0])
 cost = QuadraticCost(Q,QF,R,xg)
 
-hard_constraints = TrajoptConstraint(plant.get_num_pos(),plant.get_num_vel(),plant.get_num_cntrl(),N)
-hard_constraints.set_torque_limits([8.0],[-8.0],"ACTIVE_SET")
+hard_constraints = None #TrajoptConstraint(plant.get_num_pos(),plant.get_num_vel(),plant.get_num_cntrl(),N)
+#hard_constraints.set_torque_limits([8.0],[-8.0],"ACTIVE_SET")
 
 soft_constraints = None #TrajoptConstraint(plant.get_num_pos(),plant.get_num_vel(),plant.get_num_cntrl(),N)
 # soft_constraints.set_torque_limits([8.0],[-8.0],"AUGMENTED_LAGRANGIAN")

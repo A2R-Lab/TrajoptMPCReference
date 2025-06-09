@@ -280,7 +280,12 @@ class TrajoptMPCReference:
             BRinv = np.linalg.inv(BR)
             S = G + np.matmul(C.transpose(),np.matmul(BRinv,C))
             gamma = g - np.matmul(C.transpose(), np.matmul(BRinv, c))
-            dxu, traces = self.solveSchur(S, gamma, N, nx, use_PCG, options)
+            # import sys
+            # print("---------")
+            # np.set_printoptions(threshold=sys.maxsize,linewidth=np.inf)
+            # print(S)
+            # print("---------")
+            dxu, traces = self.solveSchur(S, gamma, N, nx+nu, use_PCG, options)
             dmCdxu = c - np.matmul(C,dxu)
             l = np.matmul(BRinv, dmCdxu)
             dxul = np.vstack((dxu,l))
